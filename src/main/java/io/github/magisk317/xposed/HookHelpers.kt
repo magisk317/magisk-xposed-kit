@@ -121,6 +121,12 @@ object HookHelpers {
         return method.invokeAccessible(target, args)
     }
 
+    fun callMethod(obj: Any?, methodName: String, parameterTypes: Array<Class<*>>, vararg args: Any?): Any? {
+        val target = obj ?: throw NullPointerException("callMethod target is null for $methodName")
+        val method = findMethodExact(target.javaClass, methodName, *parameterTypes)
+        return method.invokeAccessible(target, args)
+    }
+
     fun callStaticMethod(clazz: Class<*>?, methodName: String, vararg args: Any?): Any? {
         val target = clazz ?: throw NullPointerException("callStaticMethod class is null for $methodName")
         val method = findMethodBestMatch(target, methodName, *args)

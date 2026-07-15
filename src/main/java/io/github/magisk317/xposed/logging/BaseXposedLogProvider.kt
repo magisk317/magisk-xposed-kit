@@ -2,15 +2,20 @@ package io.github.magisk317.xposed.logging
 
 import android.content.ContentProvider
 import android.content.ContentValues
+import android.content.Context
 import android.database.Cursor
 import android.net.Uri
+import android.os.Binder
+import java.util.Locale
 
 /**
  * Base ContentProvider for receiving Xposed log events from hook processes.
  *
  * Host applications extend this class and implement [appendLog] to write
  * received events into their own log store. The provider sanitizes all
- * incoming string fields and validates caller identity via [CallerGuard].
+ * incoming fields and validates caller identity via [isCallerAllowed]. Hosts
+ * that hook additional processes must override that method with an explicit
+ * UID/package policy.
  *
  * Declare in AndroidManifest.xml:
  * ```xml
@@ -34,26 +39,47 @@ abstract class BaseXposedLogProvider : ContentProvider() {
 
     protected abstract fun appendLog(event: XposedLogEvent)
 
+    protected open fun isCallerAllowed(context: Context): Boolean {
+        return CallerGuard.isCallerAllowed(context)
+    }
+
     override fun onCreate(): Boolean = true
 
     override fun insert(uri: Uri, values: ContentValues?): Uri? {
-        if (uri.lastPathSegment != "entry") return null
+        if (uri.authority != authority || uri.lastPathSegment != "entry") return null
         val ctx = context?.applicationContext ?: return null
-        if (!CallerGuard.isCallerAllowed(ctx)) return null
+        if (!isCallerAllowed(ctx)) return null
         val raw = values ?: return null
         val event = XposedLogEvent(
             source = sanitizeSegment(raw.getAsString(XposedLogEvent.KEY_SOURCE)),
-            level = raw.getAsString(XposedLogEvent.KEY_LEVEL)?.ifBlank { "I" } ?: "I",
-            tag = raw.getAsString(XposedLogEvent.KEY_TAG).orEmpty(),
-            message = raw.getAsString(XposedLogEvent.KEY_MESSAGE).orEmpty(),
-            throwable = raw.getAsString(XposedLogEvent.KEY_THROWABLE).orEmpty(),
-            route = raw.getAsString(XposedLogEvent.KEY_ROUTE),
+            level = XposedLogIngressPolicy.normalizeLevel(raw.getAsString(XposedLogEvent.KEY_LEVEL)),
+            tag = XposedLogIngressPolicy.truncateUtf8(
+                raw.getAsString(XposedLogEvent.KEY_TAG).orEmpty(),
+                XposedLogIngressPolicy.MAX_TAG_BYTES,
+            ),
+            message = XposedLogIngressPolicy.truncateUtf8(
+                raw.getAsString(XposedLogEvent.KEY_MESSAGE).orEmpty(),
+                XposedLogIngressPolicy.MAX_MESSAGE_BYTES,
+            ),
+            throwable = XposedLogIngressPolicy.truncateUtf8(
+                raw.getAsString(XposedLogEvent.KEY_THROWABLE).orEmpty(),
+                XposedLogIngressPolicy.MAX_THROWABLE_BYTES,
+            ),
+            route = raw.getAsString(XposedLogEvent.KEY_ROUTE)?.let {
+                XposedLogIngressPolicy.truncateUtf8(it, XposedLogIngressPolicy.MAX_ROUTE_BYTES)
+            },
             force = raw.getAsBoolean(XposedLogEvent.KEY_FORCE) ?: false,
             sensitive = raw.getAsBoolean(XposedLogEvent.KEY_SENSITIVE) ?: false,
-            packageName = raw.getAsString(XposedLogEvent.KEY_PACKAGE_NAME).orEmpty(),
-            processName = raw.getAsString(XposedLogEvent.KEY_PROCESS_NAME).orEmpty(),
-            pid = raw.getAsInteger(XposedLogEvent.KEY_PID) ?: 0,
-            uid = raw.getAsInteger(XposedLogEvent.KEY_UID) ?: 0,
+            packageName = XposedLogIngressPolicy.truncateUtf8(
+                raw.getAsString(XposedLogEvent.KEY_PACKAGE_NAME).orEmpty(),
+                XposedLogIngressPolicy.MAX_IDENTITY_BYTES,
+            ),
+            processName = XposedLogIngressPolicy.truncateUtf8(
+                raw.getAsString(XposedLogEvent.KEY_PROCESS_NAME).orEmpty(),
+                XposedLogIngressPolicy.MAX_IDENTITY_BYTES,
+            ),
+            pid = Binder.getCallingPid(),
+            uid = Binder.getCallingUid(),
         )
         appendLog(event)
         return XposedLogEvent.appendUri(authority)
@@ -73,5 +99,35 @@ abstract class BaseXposedLogProvider : ContentProvider() {
 
     companion object {
         private const val MAX_SEGMENT_LENGTH = 64
+    }
+}
+
+internal object XposedLogIngressPolicy {
+    const val MAX_TAG_BYTES = 128
+    const val MAX_ROUTE_BYTES = 128
+    const val MAX_IDENTITY_BYTES = 256
+    const val MAX_MESSAGE_BYTES = 64 * 1024
+    const val MAX_THROWABLE_BYTES = 128 * 1024
+
+    private val allowedLevels = setOf("V", "D", "I", "W", "E")
+
+    fun normalizeLevel(value: String?): String {
+        return value?.uppercase(Locale.ROOT)?.takeIf(allowedLevels::contains) ?: "I"
+    }
+
+    fun truncateUtf8(value: String, maxBytes: Int): String {
+        if (value.toByteArray(Charsets.UTF_8).size <= maxBytes) return value
+        val result = StringBuilder()
+        var index = 0
+        var bytes = 0
+        while (index < value.length) {
+            val codePoint = value.codePointAt(index)
+            val encodedBytes = String(Character.toChars(codePoint)).toByteArray(Charsets.UTF_8).size
+            if (bytes + encodedBytes > maxBytes) break
+            result.appendCodePoint(codePoint)
+            bytes += encodedBytes
+            index += Character.charCount(codePoint)
+        }
+        return result.toString()
     }
 }

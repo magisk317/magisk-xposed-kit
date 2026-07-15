@@ -60,6 +60,7 @@ android {
 }
 
 dependencies {
+    api(project(":magisk-xposed-kit:logging"))
     compileOnly(libs.libxposed.api)
     compileOnly(libs.androidx.annotation)
     testImplementation(libs.libxposed.api)

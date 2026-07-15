@@ -64,6 +64,9 @@ fun findConstructorExact(className: String, classLoader: ClassLoader?, vararg pa
 fun Any.callMethod(methodName: String, vararg args: Any?): Any? =
     HookHelpers.callMethod(this, methodName, *args)
 
+fun Any.callMethod(methodName: String, parameterTypes: Array<Class<*>>, vararg args: Any?): Any? =
+    HookHelpers.callMethod(this, methodName, parameterTypes, *args)
+
 fun Class<*>.callStaticMethod(methodName: String, vararg args: Any?): Any? =
     HookHelpers.callStaticMethod(this, methodName, *args)
 

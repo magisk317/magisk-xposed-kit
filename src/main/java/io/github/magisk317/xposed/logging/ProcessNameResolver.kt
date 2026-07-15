@@ -21,7 +21,7 @@ object ProcessNameResolver {
 
     private fun resolve(): String {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            return runCatching { Application.getProcessName() }.getOrDefault("")
+            return runCatching { Application.getProcessName() }.getOrNull().orEmpty()
         }
         return runCatching {
             val activityThreadClass = Class.forName("android.app.ActivityThread")

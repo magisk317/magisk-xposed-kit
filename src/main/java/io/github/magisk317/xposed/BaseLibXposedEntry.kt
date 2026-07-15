@@ -308,6 +308,10 @@ abstract class BaseLibXposedEntry : XposedModule {
                 val classLoader = resolveLoadedPackageClassLoader("com.android.mms") ?: resolveContextClassLoader()
                 mapOf("com.android.mms" to classLoader)
             }
+            "com.google.android.apps.messaging" -> {
+                val classLoader = resolveLoadedPackageClassLoader(process) ?: resolveContextClassLoader()
+                mapOf(process to classLoader)
+            }
             "com.android.providers.telephony" -> {
                 val classLoader = resolveLoadedPackageClassLoader(process) ?: resolveContextClassLoader()
                 mapOf(process to classLoader)
@@ -348,6 +352,7 @@ abstract class BaseLibXposedEntry : XposedModule {
         val packageName = when (process) {
             "com.android.phone", "com.xiaomi.phone", "com.android.providers.telephony" -> process
             "com.android.mms", "com.android.mms:mms_service" -> "com.android.mms"
+            "com.google.android.apps.messaging" -> process
             else -> return emptyMap()
         }
         val classLoader = resolveLoadedPackageClassLoader(packageName) ?: return emptyMap()

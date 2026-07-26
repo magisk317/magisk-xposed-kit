@@ -101,10 +101,7 @@ object DiagnosticTextSanitizer {
 
     private fun sanitizeStreaming(file: File, sanitizeText: (String) -> String): Boolean {
         val parent = file.parentFile ?: return false
-        val temp = File(parent, ".sanitize_${file.name}.${Thread.currentThread().id}.tmp")
-        if (temp.exists() && !temp.delete()) {
-            throw IllegalStateException("Unable to clear temp sanitize file: ${temp.name}")
-        }
+        val temp = File.createTempFile(".sanitize_${file.name}.", ".tmp", parent)
         var changed = false
         BufferedReader(
             InputStreamReader(FileInputStream(file), StandardCharsets.UTF_8),

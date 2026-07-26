@@ -8,6 +8,7 @@ import androidx.core.content.FileProvider
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import java.util.zip.Deflater
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -162,13 +163,27 @@ object DiagnosticArchive {
                     onWarning("Skip copy due to invalid parent dir: ${destination.absolutePath}")
                     return@forEach
                 }
-                runCatching { file.copyTo(destination, overwrite = true) }
+                runCatching { copyFileFast(file, destination) }
                     .onFailure {
                         onWarning(
                             "Skip copy file failed: src=${file.absolutePath} dst=${destination.absolutePath} " +
                                 "err=${it.message ?: it.javaClass.simpleName}",
                         )
                     }
+            }
+        }
+    }
+
+    private fun copyFileFast(source: File, destination: File) {
+        source.inputStream().channel.use { input ->
+            destination.outputStream().channel.use { output ->
+                var position = 0L
+                val size = input.size()
+                while (position < size) {
+                    val transferred = output.transferFrom(input, position, size - position)
+                    if (transferred <= 0L) break
+                    position += transferred
+                }
             }
         }
     }
@@ -215,6 +230,8 @@ object DiagnosticArchive {
         }
         FileOutputStream(outputZip).use { output ->
             ZipOutputStream(output).use { zip ->
+                // Prefer throughput over ratio: log bundles are large text and share UX is latency-bound.
+                zip.setLevel(Deflater.BEST_SPEED)
                 sourceDir.walkTopDown().filter(File::isFile).forEach { file ->
                     runCatching {
                         zip.putNextEntry(ZipEntry(file.relativeTo(sourceDir).invariantSeparatorsPath))

@@ -63,6 +63,11 @@ object XposedLogClient {
     @Volatile
     private var contextLookupFailed = false
 
+    @Volatile
+    private var providerUnavailableUntilMs: Long = 0L
+
+    private const val PROVIDER_BACKOFF_MS = 60_000L
+
     fun configure(authority: String, source: String) {
         this.authority = authority
         this.source = source
@@ -72,6 +77,7 @@ object XposedLogClient {
         synchronized(zygoteLock) {
             localContext = context.applicationContext ?: context
             contextLookupFailed = false
+            providerUnavailableUntilMs = 0L
             flushZygoteBufferLocked()
         }
     }
@@ -120,11 +126,27 @@ object XposedLogClient {
     }
 
     private fun submitToExecutor(ctx: Context, event: XposedLogEvent) {
+        val now = System.currentTimeMillis()
+        if (now < providerUnavailableUntilMs) {
+            droppedCount.incrementAndGet()
+            return
+        }
         runCatching {
             logExecutor.execute {
                 runCatching {
                     val uri = XposedLogEvent.appendUri(authority)
-                    ctx.contentResolver.insert(uri, event.toContentValues())
+                    // Missing host provider logs "Failed to find provider info" and returns null
+                    // without throwing. Treat null as unavailable and back off hard.
+                    val inserted = ctx.contentResolver.insert(uri, event.toContentValues())
+                    if (inserted == null) {
+                        providerUnavailableUntilMs = System.currentTimeMillis() + PROVIDER_BACKOFF_MS
+                        droppedCount.incrementAndGet()
+                    } else {
+                        providerUnavailableUntilMs = 0L
+                    }
+                }.onFailure {
+                    providerUnavailableUntilMs = System.currentTimeMillis() + PROVIDER_BACKOFF_MS
+                    droppedCount.incrementAndGet()
                 }
             }
         }

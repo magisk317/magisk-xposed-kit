@@ -18,24 +18,25 @@ class DiagnosticTextSanitizerTest {
 
         DiagnosticTextSanitizer.sanitizeDirectory(tempDir, sanitizeText = { it.replace("secret", "***") })
 
-        assertEquals("token=***", log.readText())
+        assertEquals("token=***\n", log.readText())
         assertEquals("token=secret", binary.readText())
     }
 
     @Test
-    fun `removes oversized files and reports missing inputs`() {
-        val oversized = File(tempDir, "large.log").apply { writeText("secret") }
+    fun `keeps full oversized files and reports missing inputs`() {
+        val oversized = File(tempDir, "large.log").apply { writeText("token=secret-full") }
         val warnings = mutableListOf<String>()
         assertTrue(
             DiagnosticTextSanitizer.sanitizeTextLogFile(
                 file = oversized,
-                sanitizeText = { "***" },
-                maxFileBytes = oversized.length() - 1,
+                sanitizeText = { it.replace("secret", "***") },
+                maxFileBytes = 4L,
                 onWarning = warnings::add,
             ),
         )
-        assertFalse(oversized.exists())
-        assertTrue(warnings.single().startsWith("Removed oversized diagnostic text file:"))
+        assertTrue(oversized.exists())
+        assertEquals("token=***-full\n", oversized.readText())
+        assertTrue(warnings.any { it.contains("without truncation") })
 
         warnings.clear()
         val unreadable = File(tempDir, "missing.log")

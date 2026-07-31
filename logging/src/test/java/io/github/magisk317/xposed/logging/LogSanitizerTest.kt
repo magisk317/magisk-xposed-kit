@@ -84,7 +84,7 @@ class LogSanitizerTest {
             LogSanitizerConfig.setEnabled(true)
             assertFalse(DefaultLogSanitizer.sanitizeIfEnabled("token=abcdef123456").contains("abcdef123456"))
         } finally {
-            LogSanitizerConfig.setEnabled(true)
+            LogSanitizerConfig.setEnabled(false)
         }
     }
 
@@ -100,42 +100,42 @@ class LogSanitizerTest {
             assertFalse(result.contains("x".repeat(801)))
             assertTrue(result.endsWith("...(len=${message.length})"))
         } finally {
-            LogSanitizerConfig.setEnabled(true)
+            LogSanitizerConfig.setEnabled(false)
         }
     }
 
     @Test
-    fun `disabled sensitive debug keeps sanitization enabled`() {
+    fun `disabled sanitization keeps plaintext logs`() {
         try {
-            LogSanitizerConfig.syncSensitiveDebugMode(false)
-
-            assertTrue(LogSanitizerConfig.isEnabled())
-        } finally {
-            LogSanitizerConfig.setEnabled(true)
-        }
-    }
-
-    @Test
-    fun `enabled sensitive debug disables sanitization`() {
-        try {
-            LogSanitizerConfig.syncSensitiveDebugMode(true)
+            LogSanitizerConfig.syncSanitizationEnabled(false)
 
             assertFalse(LogSanitizerConfig.isEnabled())
         } finally {
-            LogSanitizerConfig.setEnabled(true)
+            LogSanitizerConfig.setEnabled(false)
         }
     }
 
     @Test
-    fun `missing sensitive debug state fails closed`() {
+    fun `enabled sanitization redacts logs`() {
         try {
-            LogSanitizerConfig.setEnabled(false)
-
-            LogSanitizerConfig.syncSensitiveDebugMode(null)
+            LogSanitizerConfig.syncSanitizationEnabled(true)
 
             assertTrue(LogSanitizerConfig.isEnabled())
         } finally {
+            LogSanitizerConfig.setEnabled(false)
+        }
+    }
+
+    @Test
+    fun `missing sanitization state keeps plaintext logs`() {
+        try {
             LogSanitizerConfig.setEnabled(true)
+
+            LogSanitizerConfig.syncSanitizationEnabled(null)
+
+            assertFalse(LogSanitizerConfig.isEnabled())
+        } finally {
+            LogSanitizerConfig.setEnabled(false)
         }
     }
 }

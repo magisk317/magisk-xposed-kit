@@ -13,27 +13,22 @@ object NoopLogSanitizer : LogSanitizer {
 /**
  * Process-wide switch controlling whether [DefaultLogSanitizer] deep-sanitizes.
  *
- * Neutral to any host application. Hosts wire their own preference
- * (e.g. `pref_sensitive_debug_log_mode`) into [syncSensitiveDebugMode] during init.
+ * Neutral to any host application. Hosts wire their own sanitization preference
+ * into [syncSanitizationEnabled] during init.
  *
- * Default is `true` (sanitize) so that a misconfigured/uninitialized host never
- * leaks sensitive content. Turning it off is an explicit opt-in for debugging.
+ * Default is `false`, leaving logs unsanitized until the user explicitly enables
+ * sanitization.
  */
 object LogSanitizerConfig {
     @Volatile
-    private var sanitizationEnabled: Boolean = true
+    private var sanitizationEnabled: Boolean = false
 
     fun setEnabled(enabled: Boolean) {
         sanitizationEnabled = enabled
     }
 
-    /**
-     * Applies a host's sensitive-debug preference using fail-closed semantics.
-     * Only an explicit `true` allows plaintext logs; `false` or a failed read
-     * represented by `null` keeps sanitization enabled.
-     */
-    fun syncSensitiveDebugMode(enabled: Boolean?) {
-        sanitizationEnabled = enabled != true
+    fun syncSanitizationEnabled(enabled: Boolean?) {
+        sanitizationEnabled = enabled == true
     }
 
     fun isEnabled(): Boolean = sanitizationEnabled

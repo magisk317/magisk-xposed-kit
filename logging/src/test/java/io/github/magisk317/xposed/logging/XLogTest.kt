@@ -2,6 +2,7 @@ package io.github.magisk317.xposed.logging
 
 import android.util.Log
 import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -9,10 +10,15 @@ import org.junit.jupiter.api.Test
 
 class XLogTest {
 
+    @BeforeEach
+    fun setUp() {
+        LogSanitizerConfig.setEnabled(true)
+    }
+
     @AfterEach
     fun tearDown() {
         XLog.resetForTest()
-        LogSanitizerConfig.setEnabled(true)
+        LogSanitizerConfig.setEnabled(false)
     }
 
     @Test

@@ -13,6 +13,7 @@ import io.github.libxposed.api.XposedModuleInterface.SystemServerStartingParam
 import java.lang.ref.WeakReference
 import java.util.ArrayList
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Base class for Xposed module entries backed by libxposed.
@@ -65,7 +66,37 @@ abstract class BaseLibXposedEntry : XposedModule {
         private set
 
     protected val loadedPackages = ConcurrentHashMap<String, ClassLoader>()
+
+    /**
+     * Packages whose recorded classLoader came from a last-resort fallback (the callback thread's
+     * context loader) rather than an authoritative source, mapped to that fallback loader's
+     * identity. Keying on the loader identity is what lets [recordLoadedPackage] tell a repeat of
+     * the same fallback (still provisional) apart from a genuinely better loader arriving later
+     * (authoritative, and allowed to replace the entry).
+     */
+    private val provisionalPackages = ConcurrentHashMap<String, Int>()
+
+    /**
+     * Dispatch dedup, keyed by dispatch key **plus classLoader identity**. Keying on the package
+     * alone lets a dispatch that used a wrong/fallback loader consume the key, so the later
+     * callback carrying the real loader is skipped as a duplicate and the package never gets
+     * working hooks until the process restarts.
+     */
     private val dispatchedPackages = ConcurrentHashMap<String, String>()
+
+    /** Per-package dispatch counter, bounding retries when loader resolution keeps changing. */
+    private val dispatchCounts = ConcurrentHashMap<String, AtomicInteger>()
+
+    /**
+     * Set while this thread is inside [dispatchLoad], to detect re-entrant dispatch.
+     *
+     * Anything a hook or [postDispatch] does that touches `LoadedApk` (most directly
+     * `Context.createPackageContext`) runs the framework's `AppComponentFactory` path, which the
+     * Xposed framework intercepts and turns into a *nested* `onPackageLoaded` on the same thread.
+     * That nested callback sees a `LoadedApk` still under construction: its classLoader field is
+     * null and its own `createPackageContext` would recurse again. Bail out instead.
+     */
+    private val dispatching = ThreadLocal.withInitial { false }
 
     // -- Constructors --
 
@@ -100,16 +131,48 @@ abstract class BaseLibXposedEntry : XposedModule {
     }
 
     override fun onPackageLoaded(param: PackageLoadedParam) {
-        val classLoader = resolvePackageLoadedClassLoader(param)
-        loadedPackages.putIfAbsent(param.packageName, classLoader)
-        val loadParam = LoadParam(param.packageName, processName, classLoader)
-        dispatchLoad(loadParam, phase = "packageLoaded")
+        // Runs inside the target process; an escaping throwable is fatal to the host app.
+        runCatching {
+            // Re-entrant callback triggered from inside our own dispatch (see [dispatching]).
+            // The LoadedApk being reported is half-constructed, so there is nothing safe to do.
+            if (dispatching.get() == true) {
+                logWarn("skip reentrant packageLoaded: pkg=%s process=%s", param.packageName, processName)
+                return@runCatching
+            }
+            val classLoader = resolvePackageLoadedClassLoader(param) ?: return@runCatching
+            recordLoadedPackage(param.packageName, classLoader)
+            dispatchLoad(LoadParam(param.packageName, processName, classLoader), phase = "packageLoaded")
+        }.onFailure { t ->
+            logError("onPackageLoaded failed for pkg=%s process=%s", param.packageName, processName, t)
+        }
     }
 
     override fun onPackageReady(param: PackageReadyParam) {
-        loadedPackages.put(param.packageName, param.classLoader)
+        // onPackageReady always carries the real loader, so it supersedes any provisional entry.
+        recordLoadedPackage(param.packageName, param.classLoader, authoritative = true)
         val loadParam = LoadParam(param.packageName, processName, param.classLoader)
         dispatchLoad(loadParam, phase = "packageReady")
+    }
+
+    /**
+     * Record the classLoader for a package.
+     *
+     * A loader is authoritative unless it is the very fallback that was just marked provisional
+     * for this package. An authoritative loader replaces a previously recorded provisional entry;
+     * a provisional one is only recorded when nothing is known yet.
+     */
+    private fun recordLoadedPackage(
+        packageName: String,
+        classLoader: ClassLoader,
+        authoritative: Boolean =
+            provisionalPackages[packageName] != System.identityHashCode(classLoader),
+    ) {
+        if (authoritative) {
+            provisionalPackages.remove(packageName)
+            loadedPackages.put(packageName, classLoader)
+        } else {
+            loadedPackages.putIfAbsent(packageName, classLoader)
+        }
     }
 
     override fun onHotReloading(param: HotReloadingParam): Boolean {
@@ -127,14 +190,20 @@ abstract class BaseLibXposedEntry : XposedModule {
         val hookApi = LibXposedHookApi(this)
         installModuleRuntime(this, hookApi)
         HookEnv.init(hookApi)
-        val oldHookHandles = param.oldHookHandles
+        // Platform type: the framework is not contractually bound to return non-null here.
+        @Suppress("USELESS_ELVIS")
+        val oldHookHandles = param.oldHookHandles ?: emptyList()
         hookApi.beginHotReload(oldHookHandles)
         val removed = try {
             installInitZygoteHooks()
+            // Hooks were torn down in onHotReloading, so previous dispatch bookkeeping no longer
+            // reflects installed state. Clearing it lets every restored package dispatch again.
+            dispatchedPackages.clear()
+            dispatchCounts.clear()
             restoreHotReloadState(param.savedInstanceState, oldHookHandles)
             val currentTargets = resolveCurrentProcessTargets(param, oldHookHandles)
             currentTargets.forEach { (pkg, cl) ->
-                loadedPackages.putIfAbsent(pkg, cl)
+                recordLoadedPackage(pkg, cl)
             }
             loadedPackages.forEach { (pkg, cl) ->
                 dispatchLoad(LoadParam(pkg, processName, cl), phase = "hotReload")
@@ -161,29 +230,57 @@ abstract class BaseLibXposedEntry : XposedModule {
 
     protected open fun dispatchLoad(loadParam: LoadParam, phase: String) {
         val dispatchKey = buildDispatchKey(loadParam)
-        val previousPhase = dispatchedPackages.putIfAbsent(dispatchKey, phase)
+        // Include the loader identity: the same package dispatched with a different classLoader is
+        // a genuinely new dispatch, not a duplicate. Without this a fallback loader silently
+        // consumes the key and the authoritative callback that follows is dropped.
+        val loaderKey = "$dispatchKey#${System.identityHashCode(loadParam.classLoader)}"
+        val previousPhase = dispatchedPackages.putIfAbsent(loaderKey, phase)
         if (previousPhase != null) {
             logDebug("skip duplicate package dispatch: pkg=%s process=%s phase=%s previous=%s",
                 loadParam.packageName, loadParam.processName, phase, previousPhase)
             return
+        }
+        // Bound re-dispatch so a loader that keeps changing (or an unstable resolution path)
+        // cannot make hooks pile up without limit on one package.
+        val attempts = dispatchCounts.computeIfAbsent(dispatchKey) { AtomicInteger() }.incrementAndGet()
+        if (attempts > MAX_DISPATCHES_PER_PACKAGE) {
+            logWarn("skip package dispatch over limit: pkg=%s process=%s phase=%s attempts=%d",
+                loadParam.packageName, loadParam.processName, phase, attempts)
+            return
+        }
+        if (attempts > 1) {
+            logInfo(
+                "re-dispatching pkg=${loadParam.packageName} process=${loadParam.processName} " +
+                    "phase=$phase attempt=$attempts loader=${Integer.toHexString(
+                        System.identityHashCode(loadParam.classLoader),
+                    )}",
+            )
         }
         logDebug("Loaded package: ${loadParam.packageName} process: ${loadParam.processName}")
         if ("android" == loadParam.packageName || "system" == loadParam.packageName) {
             logWarn("Android/system package loaded: pkg=%s process=%s",
                 loadParam.packageName, loadParam.processName)
         }
-        for (hook in hooks) {
-            val hookName = hook.javaClass.simpleName
-            val shouldLoad = hook.hookOnLoadPackage()
-            if (!shouldLoad) continue
-            runCatching {
-                hook.onLoadPackage(loadParam)
-            }.onFailure { throwable ->
-                logError("%s failed for pkg=%s process=%s", hookName,
-                    loadParam.packageName, loadParam.processName, throwable)
+        // Hooks and postDispatch may touch LoadedApk (e.g. createPackageContext), which the
+        // framework turns back into a nested onPackageLoaded on this thread. Mark the thread so
+        // that nested callback can bail instead of acting on a half-built LoadedApk.
+        dispatching.set(true)
+        try {
+            for (hook in hooks) {
+                val hookName = hook.javaClass.simpleName
+                val shouldLoad = hook.hookOnLoadPackage()
+                if (!shouldLoad) continue
+                runCatching {
+                    hook.onLoadPackage(loadParam)
+                }.onFailure { throwable ->
+                    logError("%s failed for pkg=%s process=%s", hookName,
+                        loadParam.packageName, loadParam.processName, throwable)
+                }
             }
+            postDispatch(loadParam)
+        } finally {
+            dispatching.set(false)
         }
-        postDispatch(loadParam)
     }
 
     /**
@@ -204,11 +301,55 @@ abstract class BaseLibXposedEntry : XposedModule {
      * On Q+ uses [PackageLoadedParam.defaultClassLoader]; on pre-Q falls back
      * to ActivityThread reflection for devices where defaultClassLoader is unreliable.
      */
-    protected open fun resolvePackageLoadedClassLoader(param: PackageLoadedParam): ClassLoader {
+    protected open fun resolvePackageLoadedClassLoader(param: PackageLoadedParam): ClassLoader? {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-            return param.defaultClassLoader
+            // getDefaultClassLoader() is declared @NonNull, so a plain `val cl = param.x` makes
+            // kotlinc emit an Intrinsics null assertion at the call site — the check below would
+            // be dead code and the assertion would throw NPE instead. It really can be null (a
+            // LoadedApk still under construction, early system_server phases), so read it through
+            // a nullable platform-typed accessor to keep the assertion out.
+            val cl = readDefaultClassLoader(param)
+            if (cl != null) return cl
+            logWarn("null defaultClassLoader for pkg=%s process=%s", param.packageName, processName)
         }
-        return resolveLoadedPackageClassLoader(param.packageName) ?: resolveContextClassLoader()
+        resolveLoadedPackageClassLoader(param.packageName)?.let { return it }
+        // Last resort: the callback thread's context loader. On a binder thread this is NOT the
+        // target app's loader, so mark the entry provisional and let a later authoritative
+        // callback replace it rather than treating it as settled.
+        return provisionalClassLoader(param.packageName, "packageLoaded")
+    }
+
+    /**
+     * Read `PackageLoadedParam.getDefaultClassLoader()` without Kotlin's non-null assertion.
+     *
+     * The API declares the getter `@NonNull`, so any direct Kotlin call site gets an
+     * `Intrinsics.checkNotNullExpressionValue` inserted, which throws NPE before we can handle
+     * the null. Going through reflection makes the result a genuinely nullable value.
+     */
+    private fun readDefaultClassLoader(param: PackageLoadedParam): ClassLoader? = runCatching {
+        param.javaClass.getMethod("getDefaultClassLoader").invoke(param) as? ClassLoader
+    }.getOrNull()
+
+
+    private fun provisionalClassLoader(packageName: String, reason: String): ClassLoader {
+        val fallback = resolveContextClassLoader()
+        provisionalPackages.put(packageName, System.identityHashCode(fallback))
+        logWarn("provisional classloader for pkg=%s reason=%s loader=%s",
+            packageName, reason, Integer.toHexString(System.identityHashCode(fallback)))
+        return fallback
+    }
+
+    /**
+     * Resolve a target package's classLoader, degrading to a provisional context loader.
+     *
+     * The provisional marking matters: during hot reload the context loader is usually the
+     * module's own loader rather than the target's, so hooks installed against it silently
+     * find nothing. Marking the entry provisional lets a later authoritative callback
+     * ([onPackageReady]) re-dispatch with the real loader instead of being deduped away.
+     */
+    private fun resolveTargetClassLoader(packageName: String): ClassLoader {
+        return resolveLoadedPackageClassLoader(packageName)
+            ?: provisionalClassLoader(packageName, "targetResolveFallback")
     }
 
     /**
@@ -301,20 +442,16 @@ abstract class BaseLibXposedEntry : XposedModule {
                 resolveSystemServerClassLoader()?.let { mapOf("android" to it) } ?: emptyMap()
             }
             "com.android.phone", "com.xiaomi.phone" -> {
-                val classLoader = resolveLoadedPackageClassLoader(process) ?: resolveContextClassLoader()
-                mapOf(process to classLoader)
+                mapOf(process to resolveTargetClassLoader(process))
             }
             "com.android.mms", "com.android.mms:mms_service" -> {
-                val classLoader = resolveLoadedPackageClassLoader("com.android.mms") ?: resolveContextClassLoader()
-                mapOf("com.android.mms" to classLoader)
+                mapOf("com.android.mms" to resolveTargetClassLoader("com.android.mms"))
             }
             "com.google.android.apps.messaging" -> {
-                val classLoader = resolveLoadedPackageClassLoader(process) ?: resolveContextClassLoader()
-                mapOf(process to classLoader)
+                mapOf(process to resolveTargetClassLoader(process))
             }
             "com.android.providers.telephony" -> {
-                val classLoader = resolveLoadedPackageClassLoader(process) ?: resolveContextClassLoader()
-                mapOf(process to classLoader)
+                mapOf(process to resolveTargetClassLoader(process))
             }
             else -> emptyMap()
         }
@@ -361,7 +498,7 @@ abstract class BaseLibXposedEntry : XposedModule {
 
     private fun dispatchCurrentLoadedTargets(param: ModuleLoadedParam, phase: String) {
         resolveCurrentLoadedTargets(param).forEach { (pkg, cl) ->
-            loadedPackages.putIfAbsent(pkg, cl)
+            recordLoadedPackage(pkg, cl)
             dispatchLoad(LoadParam(pkg, processName, cl), phase = phase)
         }
     }
@@ -395,7 +532,11 @@ abstract class BaseLibXposedEntry : XposedModule {
         packages.forEach { pkg ->
             val classLoader = resolveLoadedPackageClassLoader(pkg, oldHookHandles)
             if (classLoader == null) {
-                Log.w(logTag, "Hot reload skipped package without classloader: $pkg")
+                // The old hooks were already torn down by onHotReloading, so dropping the package
+                // here loses its hooks until the process restarts. Keep it with a provisional
+                // loader instead: the dispatch may find nothing, but the entry stays replaceable
+                // by a later authoritative onPackageReady.
+                loadedPackages.put(pkg, provisionalClassLoader(pkg, "hotReloadUnresolved"))
             } else {
                 loadedPackages.put(pkg, classLoader)
             }
@@ -453,6 +594,13 @@ abstract class BaseLibXposedEntry : XposedModule {
 
     companion object {
         private const val MIN_LIBXPOSED_API_VERSION = 102
+
+        /**
+         * Upper bound on dispatches for one package|process. Allows an authoritative loader to
+         * supersede a provisional one without letting an unstable resolution path install hooks
+         * without limit.
+         */
+        private const val MAX_DISPATCHES_PER_PACKAGE = 3
         private const val STATE_PROCESS_NAME = "processName"
         private const val STATE_LOADED_PACKAGES = "loadedPackages"
         private const val SYSTEM_SERVER_PRIMARY_CLASS = "com.android.server.notification.NotificationManagerService"

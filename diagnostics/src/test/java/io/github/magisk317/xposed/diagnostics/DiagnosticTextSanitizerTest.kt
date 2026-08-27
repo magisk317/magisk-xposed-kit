@@ -20,6 +20,7 @@ class DiagnosticTextSanitizerTest {
 
         assertEquals("token=***\n", log.readText())
         assertEquals("token=secret", binary.readText())
+        assertTrue(tempDir.listFiles().orEmpty().none { it.name.startsWith(".sanitize_") })
     }
 
     @Test

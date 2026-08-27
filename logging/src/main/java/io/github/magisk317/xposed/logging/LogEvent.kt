@@ -10,6 +10,8 @@ data class LogEvent(
     val sensitive: Boolean = true,
     val timestamp: Long = System.currentTimeMillis(),
     val metadata: Map<String, String> = emptyMap(),
+    /** Sanitized throwable text for sinks; raw [throwable] is never set by KermitLogSinkWriter. */
+    val throwableText: String? = null,
 ) {
     val priority: Int
         get() = level.priority

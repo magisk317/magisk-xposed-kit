@@ -5,6 +5,7 @@ import io.github.libxposed.api.XposedModule
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -106,6 +107,15 @@ class LibXposedHotReloadTest {
         assertFalse(oldHandle.unhooked)
         assertFalse(oldHandle.replaced)
         assertEquals(0, api.finishHotReload())
+    }
+
+    @Test
+    fun `runtime reuses hook api supplied by module entry`() {
+        val suppliedApi = LibXposedHookApi(module, "mipush")
+
+        XposedRuntime.install(module, suppliedApi)
+
+        assertSame(suppliedApi, XposedRuntime.hookApi)
     }
 
     private fun testModule(framework: RecordingFramework): TestModule {

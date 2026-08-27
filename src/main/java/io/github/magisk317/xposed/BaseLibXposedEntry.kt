@@ -60,6 +60,9 @@ abstract class BaseLibXposedEntry : XposedModule {
     /** Log tag for this module. Subclasses can override. */
     protected open val logTag: String = "BaseLibXposedEntry"
 
+    /** Prefix used to keep hook IDs stable and isolated between module consumers. */
+    protected open val hookIdPrefix: String = "xposed-kit"
+
     // -- State --
 
     protected var processName: String = "unknown"
@@ -114,7 +117,7 @@ abstract class BaseLibXposedEntry : XposedModule {
             return
         }
 
-        val hookApi = LibXposedHookApi(this)
+        val hookApi = LibXposedHookApi(this, hookIdPrefix)
         installModuleRuntime(this, hookApi)
         HookEnv.init(hookApi)
         processName = if (param.isSystemServer) "android" else param.processName
@@ -187,14 +190,17 @@ abstract class BaseLibXposedEntry : XposedModule {
     }
 
     override fun onHotReloaded(param: HotReloadedParam) {
-        val hookApi = LibXposedHookApi(this)
-        installModuleRuntime(this, hookApi)
-        HookEnv.init(hookApi)
+        val hookApi = LibXposedHookApi(this, hookIdPrefix)
         // Platform type: the framework is not contractually bound to return non-null here.
         @Suppress("USELESS_ELVIS")
         val oldHookHandles = param.oldHookHandles ?: emptyList()
         hookApi.beginHotReload(oldHookHandles)
         val removed = try {
+            // The runtime installer may itself create hooks (for example module-specific
+            // fallback hooks). Index the old handles before invoking it so those hooks can be
+            // replaced instead of being added as a second generation.
+            installModuleRuntime(this, hookApi)
+            HookEnv.init(hookApi)
             installInitZygoteHooks()
             // Hooks were torn down in onHotReloading, so previous dispatch bookkeeping no longer
             // reflects installed state. Clearing it lets every restored package dispatch again.

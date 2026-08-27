@@ -21,6 +21,7 @@ data class XposedLogEvent(
     val processName: String = "",
     val pid: Int = Process.myPid(),
     val uid: Int = Process.myUid(),
+    val sanitized: Boolean = false,
 ) {
     fun toContentValues(): ContentValues = ContentValues().apply {
         put(KEY_SOURCE, source)
@@ -31,6 +32,7 @@ data class XposedLogEvent(
         route?.let { put(KEY_ROUTE, it) }
         put(KEY_FORCE, force)
         put(KEY_SENSITIVE, sensitive)
+        put(KEY_SANITIZED, sanitized)
         put(KEY_PACKAGE_NAME, packageName)
         put(KEY_PROCESS_NAME, processName)
         put(KEY_PID, pid)
@@ -46,6 +48,7 @@ data class XposedLogEvent(
         const val KEY_ROUTE = "route"
         const val KEY_FORCE = "force"
         const val KEY_SENSITIVE = "sensitive"
+        const val KEY_SANITIZED = "sanitized"
         const val KEY_PACKAGE_NAME = "package_name"
         const val KEY_PROCESS_NAME = "process_name"
         const val KEY_PID = "pid"
@@ -67,6 +70,7 @@ data class XposedLogEvent(
             route = values.getAsString(KEY_ROUTE),
             force = values.getAsBoolean(KEY_FORCE) ?: false,
             sensitive = values.getAsBoolean(KEY_SENSITIVE) ?: false,
+            sanitized = values.getAsBoolean(KEY_SANITIZED) ?: false,
             packageName = values.getAsString(KEY_PACKAGE_NAME).orEmpty(),
             processName = values.getAsString(KEY_PROCESS_NAME).orEmpty(),
             pid = values.getAsInteger(KEY_PID) ?: Process.myPid(),

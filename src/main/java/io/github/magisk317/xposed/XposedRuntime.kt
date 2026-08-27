@@ -3,6 +3,7 @@ package io.github.magisk317.xposed
 import android.util.Log
 import io.github.libxposed.api.XposedInterface
 import io.github.libxposed.api.XposedModule
+import io.github.magisk317.xposed.logging.DefaultLogSanitizer
 import java.lang.reflect.Constructor
 import java.lang.reflect.Executable
 import java.lang.reflect.Member
@@ -23,9 +24,13 @@ object XposedRuntime {
     internal var hookApi: LibXposedHookApi? = null
         private set
 
-    fun install(module: XposedModule, hookIdPrefix: String = "xposed-kit") {
+    fun install(module: XposedModule, hookApi: LibXposedHookApi) {
         this.module = module
-        this.hookApi = LibXposedHookApi(module, hookIdPrefix)
+        this.hookApi = hookApi
+    }
+
+    fun install(module: XposedModule, hookIdPrefix: String = "xposed-kit") {
+        install(module, LibXposedHookApi(module, hookIdPrefix))
     }
 
     fun hook(executable: Executable, methodHook: MethodHook): HookHandle {
@@ -56,18 +61,28 @@ object XposedRuntime {
 
     fun log(priority: Int, tag: String?, message: String, throwable: Throwable? = null) {
         val activeModule = module
+        val safeThrowable = throwable?.let(::sanitizeThrowable)
         if (activeModule == null) {
-            if (throwable == null) {
+            if (safeThrowable == null) {
                 Log.println(priority, tag ?: "XposedKit", message)
             } else {
-                Log.println(priority, tag ?: "XposedKit", "$message\n${Log.getStackTraceString(throwable)}")
+                Log.println(priority, tag ?: "XposedKit", "$message\n${Log.getStackTraceString(safeThrowable)}")
             }
             return
         }
-        if (throwable == null) {
+        if (safeThrowable == null) {
             activeModule.log(priority, tag, message)
         } else {
-            activeModule.log(priority, tag, message, throwable)
+            activeModule.log(priority, tag, message, safeThrowable)
+        }
+    }
+
+    private fun sanitizeThrowable(throwable: Throwable): Throwable {
+        val safeText = DefaultLogSanitizer.sanitizeIfEnabled(throwable.stackTraceToString())
+        return Throwable(safeText).apply {
+            // Keep the platform output bounded and prevent the original throwable from being
+            // retained as a cause or rendered again by the Xposed logger.
+            stackTrace = emptyArray()
         }
     }
 

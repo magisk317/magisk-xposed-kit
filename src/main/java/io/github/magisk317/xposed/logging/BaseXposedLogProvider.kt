@@ -50,6 +50,7 @@ abstract class BaseXposedLogProvider : ContentProvider() {
         val ctx = context?.applicationContext ?: return null
         if (!isCallerAllowed(ctx)) return null
         val raw = values ?: return null
+        val alreadySanitized = raw.getAsBoolean(XposedLogEvent.KEY_SANITIZED) == true
         val event = XposedLogEvent(
             source = sanitizeSegment(raw.getAsString(XposedLogEvent.KEY_SOURCE)),
             level = XposedLogIngressPolicy.normalizeLevel(raw.getAsString(XposedLogEvent.KEY_LEVEL)),
@@ -58,11 +59,23 @@ abstract class BaseXposedLogProvider : ContentProvider() {
                 XposedLogIngressPolicy.MAX_TAG_BYTES,
             ),
             message = XposedLogIngressPolicy.truncateUtf8(
-                raw.getAsString(XposedLogEvent.KEY_MESSAGE).orEmpty(),
+                if (alreadySanitized) {
+                    raw.getAsString(XposedLogEvent.KEY_MESSAGE).orEmpty()
+                } else {
+                    DefaultLogSanitizer.sanitizeIfEnabled(
+                        raw.getAsString(XposedLogEvent.KEY_MESSAGE).orEmpty(),
+                    )
+                },
                 XposedLogIngressPolicy.MAX_MESSAGE_BYTES,
             ),
             throwable = XposedLogIngressPolicy.truncateUtf8(
-                raw.getAsString(XposedLogEvent.KEY_THROWABLE).orEmpty(),
+                if (alreadySanitized) {
+                    raw.getAsString(XposedLogEvent.KEY_THROWABLE).orEmpty()
+                } else {
+                    DefaultLogSanitizer.sanitizeIfEnabled(
+                        raw.getAsString(XposedLogEvent.KEY_THROWABLE).orEmpty(),
+                    )
+                },
                 XposedLogIngressPolicy.MAX_THROWABLE_BYTES,
             ),
             route = raw.getAsString(XposedLogEvent.KEY_ROUTE)?.let {
@@ -70,6 +83,7 @@ abstract class BaseXposedLogProvider : ContentProvider() {
             },
             force = raw.getAsBoolean(XposedLogEvent.KEY_FORCE) ?: false,
             sensitive = raw.getAsBoolean(XposedLogEvent.KEY_SENSITIVE) ?: false,
+            sanitized = true,
             packageName = XposedLogIngressPolicy.truncateUtf8(
                 raw.getAsString(XposedLogEvent.KEY_PACKAGE_NAME).orEmpty(),
                 XposedLogIngressPolicy.MAX_IDENTITY_BYTES,

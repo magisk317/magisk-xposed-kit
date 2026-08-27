@@ -24,11 +24,15 @@ class LibXposedHookApi(
     private val pendingOldHooksByExecutable = linkedMapOf<String, ArrayDeque<XposedInterface.HookHandle>>()
     private val pendingOldHooks = linkedSetOf<XposedInterface.HookHandle>()
     private var replacingOldHooks = false
+    private var replacedHookCount = 0
+    private var newlyInstalledHookCount = 0
 
     // -- Hot reload lifecycle --
 
     fun beginHotReload(oldHandles: List<XposedInterface.HookHandle>) {
         replacingOldHooks = true
+        replacedHookCount = 0
+        newlyInstalledHookCount = 0
         pendingOldHooksById.clear()
         pendingOldHooksByExecutable.clear()
         pendingOldHooks.clear()
@@ -44,10 +48,21 @@ class LibXposedHookApi(
                 }
             }
         }
+        logHotReloadDiagnostic(
+            "hot reload begin oldHandles=${oldHandles.size} indexed=${pendingOldHooks.size}",
+        )
     }
 
     fun finishHotReload(): Int {
         val staleHandles = pendingOldHooks.toList()
+        if (staleHandles.isNotEmpty()) {
+            val details = staleHandles
+                .take(MAX_STALE_HANDLE_LOGS)
+                .joinToString(separator = " | ", transform = ::describeHandle)
+            logHotReloadDiagnostic(
+                "hot reload stale handles count=${staleHandles.size} details=$details",
+            )
+        }
         staleHandles.forEach { handle ->
             runCatching { handle.unhook() }
                 .onFailure { module.log(Log.WARN, LOG_TAG, "Failed to unhook stale hot reload handle", it) }
@@ -57,6 +72,10 @@ class LibXposedHookApi(
         pendingOldHooksByExecutable.clear()
         pendingOldHooks.clear()
         replacingOldHooks = false
+        logHotReloadDiagnostic(
+            "hot reload finish replaced=$replacedHookCount " +
+                "new=$newlyInstalledHookCount stale=$removed",
+        )
         return removed
     }
 
@@ -111,16 +130,19 @@ class LibXposedHookApi(
         val hookId = buildHookId(executable, callback)
         val legacyHookId = buildLegacyHookId(executable, callback)
         val executableSignature = buildExecutableSignature(executable)
-        return sequenceOf(hookId, legacyHookId)
+        val oldHandle = sequenceOf(hookId, legacyHookId)
             .distinct()
             .firstNotNullOfOrNull { id -> takePendingHook(pendingOldHooksById[id]) }
-            ?.replaceHook(hooker)
             ?: takeUniquePendingHookByExecutable(executableSignature)
                 ?.also {
                     module.log(Log.INFO, LOG_TAG, "Replacing hot reload hook by executable signature: $executableSignature")
                 }
-                ?.replaceHook(hooker)
-            ?: module.hook(executable).setId(hookId).intercept(hooker)
+        if (oldHandle != null) {
+            replacedHookCount += 1
+            return oldHandle.replaceHook(hooker)
+        }
+        newlyInstalledHookCount += 1
+        return module.hook(executable).setId(hookId).intercept(hooker)
     }
 
     // -- Hook ID construction --
@@ -172,6 +194,18 @@ class LibXposedHookApi(
         return signature.ifBlank { null }
     }
 
+    private fun logHotReloadDiagnostic(message: String) {
+        module.log(Log.INFO, LOG_TAG, message)
+        runCatching { Log.i(LOG_TAG, message) }
+    }
+
+    private fun describeHandle(handle: XposedInterface.HookHandle): String {
+        return runCatching {
+            val executable = handle.executable
+            "id=${handle.id ?: "<null>"},exec=${executable.declaringClass.name}#${executable.name}"
+        }.getOrElse { "unreadable=${it.javaClass.simpleName}" }
+    }
+
     // -- Hooker creation --
 
     private fun createHooker(member: Member, callback: MethodHook): XposedInterface.Hooker {
@@ -217,5 +251,6 @@ class LibXposedHookApi(
 
     companion object {
         private const val LOG_TAG = "XposedKit"
+        private const val MAX_STALE_HANDLE_LOGS = 16
     }
 }

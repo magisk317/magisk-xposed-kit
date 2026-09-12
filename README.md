@@ -10,6 +10,8 @@ Shared Xposed hook framework library for the magisk317 module ecosystem.
 - **HookHelpers** — reflection utilities (findClass, findMethod, callMethod, field access)
 - **XposedDsl** — Kotlin extension functions for hooking (`Method.hook {}`, `Class.hookMethod {}`)
 - **LibXposedHookApi** — libxposed-backed hook API with hot-reload hook replacement
+- **LibXposedPreferenceSources** — read-only remote/local `SharedPreferences` adapters with explicit
+  hit/missing/unavailable results and source attribution
 
 ## Usage
 
@@ -26,3 +28,17 @@ dependencies {
     implementation(project(":magisk-xposed-kit"))
 }
 ```
+
+The preference adapter is intentionally policy-free:
+
+```kotlin
+val remote = LibXposedPreferenceSources.remote(module, "module_runtime_preferences")
+when (val result = remote.readBoolean("feature_enabled", false)) {
+    is PreferenceRead.Hit -> use(result.value)
+    PreferenceRead.Missing -> use(false)
+    PreferenceRead.Unavailable -> deferUntilRemoteIsAvailable()
+}
+```
+
+It does not define application keys, write or mirror values, change file permissions, or decide
+whether a local source overrides a remote source. Those rules stay in each parent repository.

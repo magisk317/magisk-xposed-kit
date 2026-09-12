@@ -19,16 +19,23 @@ object NoopLogSanitizer : LogSanitizer {
  * Default is `false`, leaving logs unsanitized until the user explicitly enables
  * sanitization.
  */
+/**
+ * Process-wide switch controlling whether [DefaultLogSanitizer] deep-sanitizes.
+ *
+ * Default is `true` (sanitized). Hosts call [syncFromVerboseMode] with the
+ * verbose flag: verbose ON -> sanitize OFF (raw data for debugging).
+ */
 object LogSanitizerConfig {
     @Volatile
-    private var sanitizationEnabled: Boolean = false
+    private var sanitizationEnabled: Boolean = true
 
     fun setEnabled(enabled: Boolean) {
         sanitizationEnabled = enabled
     }
 
-    fun syncSanitizationEnabled(enabled: Boolean?) {
-        sanitizationEnabled = enabled == true
+    /** Pass verbose-mode enabled; sanitization is the inverse. */
+    fun syncFromVerboseMode(verboseEnabled: Boolean?) {
+        sanitizationEnabled = verboseEnabled != true
     }
 
     fun isEnabled(): Boolean = sanitizationEnabled
@@ -88,10 +95,9 @@ object DefaultLogSanitizer : LogSanitizer {
     }
 
     /**
-     * Sanitize only when [LogSanitizerConfig] is enabled. Sensitive-debug mode
-     * preserves plaintext content but still enforces the shared length cap.
-     * Lets hosts route all log output through one call and control sanitization
-     * via the shared switch without allowing unbounded log entries.
+     * Sanitize when [LogSanitizerConfig] is enabled (default).
+     * When verbose logging is ON, sanitization is OFF — raw content is
+     * preserved for debugging, with only the length cap applied.
      */
     fun sanitizeIfEnabled(message: String): String {
         return if (LogSanitizerConfig.isEnabled()) {

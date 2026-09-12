@@ -64,9 +64,9 @@ object XposedRuntime {
         val safeThrowable = throwable?.let(::sanitizeThrowable)
         if (activeModule == null) {
             if (safeThrowable == null) {
-                Log.println(priority, tag ?: "XposedKit", message)
+                Log.println(priority, tag ?: "magisk-xposed-kit", message)
             } else {
-                Log.println(priority, tag ?: "XposedKit", "$message\n${Log.getStackTraceString(safeThrowable)}")
+                Log.println(priority, tag ?: "magisk-xposed-kit", "$message\n${Log.getStackTraceString(safeThrowable)}")
             }
             return
         }

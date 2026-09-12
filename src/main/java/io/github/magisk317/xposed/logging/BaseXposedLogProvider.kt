@@ -29,6 +29,10 @@ abstract class BaseXposedLogProvider : ContentProvider() {
 
     abstract val authority: String
 
+    protected open val ingressPolicy: LogProviderQuotaPolicy? = null
+
+    protected open fun isRouteAllowed(route: String?): Boolean = true
+
     protected open fun sanitizeSegment(value: String?): String {
         return value
             ?.takeIf { it.isNotBlank() }
@@ -50,7 +54,18 @@ abstract class BaseXposedLogProvider : ContentProvider() {
         val ctx = context?.applicationContext ?: return null
         if (!isCallerAllowed(ctx)) return null
         val raw = values ?: return null
+        val callingUid = Binder.getCallingUid()
+        val payloadBytes = raw.valueSet().sumOf { (_, value) ->
+            value?.toString()?.toByteArray(Charsets.UTF_8)?.size?.toLong() ?: 0L
+        }
+        if (ingressPolicy?.tryAcquire(callingUid, payloadBytes, System.currentTimeMillis()) == false) {
+            return null
+        }
         val alreadySanitized = raw.getAsBoolean(XposedLogEvent.KEY_SANITIZED) == true
+        val normalizedRoute = raw.getAsString(XposedLogEvent.KEY_ROUTE)?.let {
+            XposedLogIngressPolicy.truncateUtf8(it, XposedLogIngressPolicy.MAX_ROUTE_BYTES)
+        }
+        if (!isRouteAllowed(normalizedRoute)) return null
         val event = XposedLogEvent(
             source = sanitizeSegment(raw.getAsString(XposedLogEvent.KEY_SOURCE)),
             level = XposedLogIngressPolicy.normalizeLevel(raw.getAsString(XposedLogEvent.KEY_LEVEL)),
@@ -78,9 +93,7 @@ abstract class BaseXposedLogProvider : ContentProvider() {
                 },
                 XposedLogIngressPolicy.MAX_THROWABLE_BYTES,
             ),
-            route = raw.getAsString(XposedLogEvent.KEY_ROUTE)?.let {
-                XposedLogIngressPolicy.truncateUtf8(it, XposedLogIngressPolicy.MAX_ROUTE_BYTES)
-            },
+            route = normalizedRoute,
             force = raw.getAsBoolean(XposedLogEvent.KEY_FORCE) ?: false,
             sensitive = raw.getAsBoolean(XposedLogEvent.KEY_SENSITIVE) ?: false,
             sanitized = true,
@@ -93,7 +106,14 @@ abstract class BaseXposedLogProvider : ContentProvider() {
                 XposedLogIngressPolicy.MAX_IDENTITY_BYTES,
             ),
             pid = Binder.getCallingPid(),
-            uid = Binder.getCallingUid(),
+            uid = callingUid,
+            schemaVersion = raw.getAsInteger(XposedLogEvent.KEY_SCHEMA_VERSION)
+                ?: XposedLogEvent.CURRENT_SCHEMA_VERSION,
+            eventId = raw.getAsString(XposedLogEvent.KEY_EVENT_ID)
+                .takeUnless { it.isNullOrBlank() }
+                ?: java.util.UUID.randomUUID().toString(),
+            sequence = raw.getAsLong(XposedLogEvent.KEY_SEQUENCE) ?: 0L,
+            attributesJson = raw.getAsString(XposedLogEvent.KEY_ATTRIBUTES) ?: "{}",
         )
         appendLog(event)
         return XposedLogEvent.appendUri(authority)

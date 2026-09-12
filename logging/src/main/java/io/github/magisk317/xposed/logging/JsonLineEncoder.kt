@@ -12,11 +12,20 @@ class JsonLineField private constructor(
     internal sealed interface Value {
         data class StringValue(val value: String) : Value
         data class NumberValue(val encoded: String) : Value
+        data class RawJsonValue(val encoded: String) : Value
     }
 
     companion object {
         fun string(name: String, value: String, include: Boolean = true): JsonLineField =
             JsonLineField(name, Value.StringValue(value), include)
+
+        fun rawJson(name: String, encodedJson: String, include: Boolean = true): JsonLineField {
+            if (!include) {
+                return JsonLineField(name, Value.RawJsonValue("null"), false)
+            }
+            require(encodedJson.isNotBlank()) { "Raw JSON value for '$name' must not be blank" }
+            return JsonLineField(name, Value.RawJsonValue(encodedJson), true)
+        }
 
         fun number(name: String, value: Number, include: Boolean = true): JsonLineField {
             val encoded = value.toString()
@@ -47,6 +56,7 @@ object JsonLineEncoder {
             when (val value = field.value) {
                 is JsonLineField.Value.StringValue -> appendJsonString(value.value)
                 is JsonLineField.Value.NumberValue -> append(value.encoded)
+                is JsonLineField.Value.RawJsonValue -> append(value.encoded)
             }
         }
         append('}')

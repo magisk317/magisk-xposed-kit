@@ -67,6 +67,7 @@ object XposedLogClient {
     private val droppedBackoffCount = AtomicLong(0)
     private val providerNullCount = AtomicLong(0)
     private val providerExceptionCount = AtomicLong(0)
+    private val sequence = AtomicLong(0)
     private val lastProviderFailureAtMs = AtomicLong(0)
 
     private val logExecutor = ThreadPoolExecutor(
@@ -164,8 +165,22 @@ object XposedLogClient {
         force: Boolean = false,
         route: String? = null,
         sensitive: Boolean = false,
+        throwableText: String? = null,
     ) {
-        emit(levelFor(priority), tag, message, null, force = force, route = route, sensitive = sensitive)
+        emit(
+            levelFor(priority),
+            tag,
+            message,
+            null,
+            force = force,
+            route = route,
+            sensitive = sensitive,
+            throwableText = throwableText,
+        )
+    }
+
+    fun send(record: LogRecord) {
+        send(XposedLogEvent.fromRecord(record, sequence.incrementAndGet()))
     }
 
     fun send(event: XposedLogEvent) {
@@ -236,13 +251,14 @@ object XposedLogClient {
         force: Boolean = false,
         route: String? = null,
         sensitive: Boolean = false,
+        throwableText: String? = null,
     ) {
         val event = XposedLogEvent(
             source = source,
             level = level,
             tag = tag,
             message = message ?: "",
-            throwable = throwable?.stackTraceToString() ?: "",
+            throwable = throwableText ?: throwable?.stackTraceToString() ?: "",
             route = route,
             force = force,
             sensitive = sensitive,

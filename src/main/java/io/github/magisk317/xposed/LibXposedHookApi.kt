@@ -250,7 +250,7 @@ class LibXposedHookApi(
     }
 
     companion object {
-        private const val LOG_TAG = "XposedKit"
+        private const val LOG_TAG = "magisk-xposed-kit"
         private const val MAX_STALE_HANDLE_LOGS = 16
     }
 }

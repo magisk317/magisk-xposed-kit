@@ -2,6 +2,7 @@
 
 package io.github.magisk317.xposed
 
+import io.github.libxposed.api.XposedInterface
 import java.lang.reflect.Constructor
 import java.lang.reflect.Method
 
@@ -12,6 +13,21 @@ fun Method.hook(callback: HookCallback): HookHandle =
 
 fun Constructor<*>.hook(callback: HookCallback): HookHandle =
     XposedRuntime.hook(this, MethodHook(callback))
+
+// -- Class initializer hook DSL --
+
+/**
+ * Hook the static initializer (<clinit>) of a class.
+ *
+ * Uses LSPosed's hookClassInitializer API to intercept class initialization.
+ * This is useful for catching errors during class initialization (e.g. NoSuchFieldError).
+ *
+ * @return The HookBuilder for further configuration, or null if XposedModule is not available.
+ */
+fun Class<*>.hookClassInitializer(): XposedInterface.HookBuilder? {
+    val module = XposedRuntime.module ?: return null
+    return module.hookClassInitializer(this)
+}
 
 // -- Class-level hook DSL --
 

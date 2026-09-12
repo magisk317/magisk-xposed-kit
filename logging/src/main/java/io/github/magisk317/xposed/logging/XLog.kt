@@ -26,7 +26,7 @@ object XLog {
     private var sensitiveMessageSanitizer: LogSanitizer = DefaultLogSanitizer
 
     @Volatile
-    private var logTag: String = "xposed"
+    private var logTag: String = "magisk-xposed-kit"
 
     @Volatile
     private var sLogLevel: Int = Log.INFO
@@ -78,7 +78,11 @@ object XLog {
         if (priority < sLogLevel) return
 
         val formattedMessage = LogFormatter.formatArgs(message, args)
+        val throwable = args.lastOrNull() as? Throwable
         val outputMessage = prepareForOutput(formattedMessage, sensitive)
+        val outputThrowable = throwable?.stackTraceToString()?.let {
+            prepareForOutput(it, sensitive)
+        }
 
         val activeTestSink = testSink
         if (activeTestSink != null) {
@@ -100,6 +104,7 @@ object XLog {
                 route = route ?: routeContext.get(),
                 force = force,
                 sensitive = sensitive,
+                throwableText = outputThrowable,
             ),
         )
     }
@@ -193,7 +198,7 @@ object XLog {
         sensitiveMessageSanitizer = DefaultLogSanitizer
         testSink = null
         logPrinterForTest = null
-        logTag = "xposed"
+        logTag = "magisk-xposed-kit"
         sLogLevel = Log.INFO
         logToXposed = false
         routeContext.remove()

@@ -135,6 +135,7 @@ abstract class BaseLibXposedEntry : XposedModule {
 
     override fun onPackageLoaded(param: PackageLoadedParam) {
         // Runs inside the target process; an escaping throwable is fatal to the host app.
+        logInfo("onPackageLoaded entering for pkg=${param.packageName} process=$processName")
         runCatching {
             // Re-entrant callback triggered from inside our own dispatch (see [dispatching]).
             // The LoadedApk being reported is half-constructed, so there is nothing safe to do.
@@ -142,9 +143,16 @@ abstract class BaseLibXposedEntry : XposedModule {
                 logWarn("skip reentrant packageLoaded: pkg=%s process=%s", param.packageName, processName)
                 return@runCatching
             }
-            val classLoader = resolvePackageLoadedClassLoader(param) ?: return@runCatching
+            val classLoader = resolvePackageLoadedClassLoader(param)
+            logInfo("onPackageLoaded classLoader resolved for pkg=${param.packageName} classLoader=${classLoader?.hashCode()}")
+            if (classLoader == null) {
+                logWarn("onPackageLoaded classLoader is null for pkg=%s", param.packageName)
+                return@runCatching
+            }
             recordLoadedPackage(param.packageName, classLoader)
+            logInfo("onPackageLoaded calling dispatchLoad for pkg=${param.packageName}")
             dispatchLoad(LoadParam(param.packageName, processName, classLoader), phase = "packageLoaded")
+            logInfo("onPackageLoaded completed dispatchLoad for pkg=${param.packageName}")
         }.onFailure { t ->
             logError("onPackageLoaded failed for pkg=%s process=%s", param.packageName, processName, t)
         }
@@ -152,9 +160,12 @@ abstract class BaseLibXposedEntry : XposedModule {
 
     override fun onPackageReady(param: PackageReadyParam) {
         // onPackageReady always carries the real loader, so it supersedes any provisional entry.
+        logInfo("onPackageReady entering for pkg=${param.packageName} process=$processName")
         recordLoadedPackage(param.packageName, param.classLoader, authoritative = true)
         val loadParam = LoadParam(param.packageName, processName, param.classLoader)
+        logInfo("onPackageReady calling dispatchLoad for pkg=${param.packageName}")
         dispatchLoad(loadParam, phase = "packageReady")
+        logInfo("onPackageReady completed dispatchLoad for pkg=${param.packageName}")
     }
 
     /**
@@ -246,6 +257,7 @@ abstract class BaseLibXposedEntry : XposedModule {
                 loadParam.packageName, loadParam.processName, phase, previousPhase)
             return
         }
+        logInfo("dispatchLoad entering for pkg=${loadParam.packageName} process=${loadParam.processName} phase=$phase")
         // Bound re-dispatch so a loader that keeps changing (or an unstable resolution path)
         // cannot make hooks pile up without limit on one package.
         val attempts = dispatchCounts.computeIfAbsent(dispatchKey) { AtomicInteger() }.incrementAndGet()
@@ -272,12 +284,16 @@ abstract class BaseLibXposedEntry : XposedModule {
         // that nested callback can bail instead of acting on a half-built LoadedApk.
         dispatching.set(true)
         try {
+            logInfo("dispatchLoad dispatching hooks for pkg=${loadParam.packageName} process=${loadParam.processName} hookCount=${hooks.size}")
             for (hook in hooks) {
                 val hookName = hook.javaClass.simpleName
                 val shouldLoad = hook.hookOnLoadPackage()
+                logInfo("dispatchLoad hook=$hookName shouldLoad=$shouldLoad pkg=${loadParam.packageName}")
                 if (!shouldLoad) continue
                 runCatching {
+                    logInfo("dispatchLoad calling onLoadPackage for hook=$hookName pkg=${loadParam.packageName}")
                     hook.onLoadPackage(loadParam)
+                    logInfo("dispatchLoad completed onLoadPackage for hook=$hookName pkg=${loadParam.packageName}")
                 }.onFailure { throwable ->
                     logError("%s failed for pkg=%s process=%s", hookName,
                         loadParam.packageName, loadParam.processName, throwable)

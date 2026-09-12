@@ -101,7 +101,7 @@ object LoggingKit {
     @JvmStatic
     @JvmOverloads
     fun init(
-        defaultTag: String = "MiPush",
+        defaultTag: String,
         minSeverity: Severity = Severity.Info,
         logToXposed: Boolean = false,
         sanitizer: LogSanitizer = DefaultLogSanitizer,

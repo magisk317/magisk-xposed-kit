@@ -105,37 +105,35 @@ class LogSanitizerTest {
     }
 
     @Test
-    fun `disabled sanitization keeps plaintext logs`() {
+    fun `verbose mode disables sanitization`() {
         try {
-            LogSanitizerConfig.syncSanitizationEnabled(false)
+            LogSanitizerConfig.syncFromVerboseMode(true)
 
             assertFalse(LogSanitizerConfig.isEnabled())
         } finally {
-            LogSanitizerConfig.setEnabled(false)
+            LogSanitizerConfig.setEnabled(true)
         }
     }
 
     @Test
-    fun `enabled sanitization redacts logs`() {
+    fun `non-verbose mode enables sanitization`() {
         try {
-            LogSanitizerConfig.syncSanitizationEnabled(true)
+            LogSanitizerConfig.syncFromVerboseMode(false)
 
             assertTrue(LogSanitizerConfig.isEnabled())
         } finally {
-            LogSanitizerConfig.setEnabled(false)
+            LogSanitizerConfig.setEnabled(true)
         }
     }
 
     @Test
-    fun `missing sanitization state keeps plaintext logs`() {
+    fun `null verbose mode enables sanitization by default`() {
         try {
-            LogSanitizerConfig.setEnabled(true)
+            LogSanitizerConfig.syncFromVerboseMode(null)
 
-            LogSanitizerConfig.syncSanitizationEnabled(null)
-
-            assertFalse(LogSanitizerConfig.isEnabled())
+            assertTrue(LogSanitizerConfig.isEnabled())
         } finally {
-            LogSanitizerConfig.setEnabled(false)
+            LogSanitizerConfig.setEnabled(true)
         }
     }
 }

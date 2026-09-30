@@ -25,13 +25,37 @@ object MagiskOtel {
         val endpoint: String = DEFAULT_ENDPOINT,
         val serviceName: String,
         val serviceVersion: String = "unknown",
+        /**
+         * Build commit (short sha) stamped at build time, e.g. via BuildConfig. Empty by
+         * default so existing consumers keep their current behaviour; when set, every span
+         * carries a `service.commit` resource attribute so the cloud side can slice by
+         * version x commit instead of version alone.
+         */
+        val serviceCommit: String = "",
         val projectId: String = "",
         val projectName: String = "",
         val environment: String = "device",
         val serviceInstanceId: String = "",
+        /**
+         * Device dimension resource attributes (e.g. device.manufacturer /
+         * device.model / os.version). Consumers fill these from android.os.Build at
+         * configure time; the kit stays platform-agnostic. Empty by default so
+         * existing consumers keep their current behaviour.
+         */
+        val deviceAttributes: Map<String, String> = emptyMap(),
         val activityTracker: InstallationActivityTracker? = null,
         val connectTimeoutMs: Int = 4_000,
         val readTimeoutMs: Int = 4_000,
+        /**
+         * Span names that are never exported, for high-volume low-signal heartbeats.
+         * Empty by default so existing consumers keep their current behaviour.
+         */
+        val suppressedEventNames: Set<String> = emptySet(),
+        /**
+         * Values of the `result` attribute that are never exported. Use this to drop success-path
+         * noise while keeping skip / error / fallback spans. Empty by default.
+         */
+        val suppressedResultValues: Set<String> = emptySet(),
     )
 
     private val configRef = AtomicReference<Config?>(null)
@@ -66,6 +90,25 @@ object MagiskOtel {
     }
 
     /**
+     * Mirrors the effective analytics switch into the plain SharedPreferences file that also holds
+     * the anonymous installation id. Hook processes cannot read DataStore, but they can read this
+     * file through libxposed remote preferences, so the hook side can follow the user's switch.
+     */
+    @JvmStatic
+    fun publishSwitch(context: android.content.Context, key: String, enabled: Boolean) {
+        runCatching {
+            context
+                .getSharedPreferences(
+                    AnonymousInstallationId.DEFAULT_PREFERENCES_NAME,
+                    android.content.Context.MODE_PRIVATE,
+                )
+                .edit()
+                .putBoolean(key, enabled)
+                .apply()
+        }
+    }
+
+    /**
      * Install config only when no process-local config exists yet.
      * Useful for hook processes that may race with later host configuration.
      */
@@ -85,6 +128,9 @@ object MagiskOtel {
 
     /**
      * Emit a best-effort span. Safe to call from any thread.
+     *
+     * Attributes pass the hygiene gate in [sanitizeAttributes] first: `reason` is kept inside a
+     * stable token vocabulary and every value is bounded.
      */
     @JvmStatic
     @JvmOverloads
@@ -98,7 +144,10 @@ object MagiskOtel {
             return
         }
         val safeName = name.trim().ifEmpty { "event" }
-        val safeAttrs = attributes.filterKeys { it.isNotBlank() }.mapValues { it.value }
+        if (isSuppressed(config, safeName, attributes)) {
+            return
+        }
+        val safeAttrs = sanitizeAttributes(attributes)
         executor.execute {
             runCatching {
                 if (safeName != "app.active") {
@@ -116,6 +165,63 @@ object MagiskOtel {
         }
     }
 
+    /**
+     * Noise gate evaluated before a span is queued.
+     *
+     * Kept pure so consumers can unit-test the suppression rules without touching the exporter.
+     * Both sets are empty by default, so a consumer that configures nothing keeps every span.
+     */
+    internal fun isSuppressed(
+        config: Config,
+        name: String,
+        attributes: Map<String, String>,
+    ): Boolean {
+        if (name in config.suppressedEventNames) {
+            return true
+        }
+        if (config.suppressedResultValues.isEmpty()) {
+            return false
+        }
+        val result = attributes["result"] ?: return false
+        return result in config.suppressedResultValues
+    }
+
+    /**
+     * Attribute hygiene gate evaluated before a span is queued.
+     *
+     * `reason` is an identifier: only stable tokens survive (letters, digits, `_`, `.`) up to
+     * [REASON_MAX_CHARS]; anything else - raw shell stderr, exception messages, free text -
+     * folds to [REASON_UNCLASSIFIED] so the cloud side keeps a bounded, aggregatable value
+     * domain. Other attribute values keep free text but get control characters collapsed and
+     * are truncated at [ATTRIBUTE_MAX_BYTES] on a UTF-8 boundary.
+     *
+     * Kept pure so consumers can unit-test the gate without touching the exporter.
+     */
+    internal fun sanitizeAttributes(attributes: Map<String, String>): Map<String, String> {
+        if (attributes.isEmpty()) return emptyMap()
+        val sanitized = LinkedHashMap<String, String>(attributes.size)
+        attributes.forEach { (key, value) ->
+            val safeKey = key.trim()
+            if (safeKey.isNotEmpty()) {
+                sanitized[safeKey] =
+                    if (safeKey == ATTRIBUTE_REASON) sanitizeReason(value) else sanitizeValue(value)
+            }
+        }
+        return sanitized
+    }
+
+    internal fun sanitizeReason(value: String): String {
+        val trimmed = value.trim()
+        if (trimmed.isEmpty() || trimmed.length > REASON_MAX_CHARS) return REASON_UNCLASSIFIED
+        if (!REASON_TOKEN.matches(trimmed)) return REASON_UNCLASSIFIED
+        return trimmed
+    }
+
+    internal fun sanitizeValue(value: String): String {
+        val flattened = CONTROL_CHARS.replace(value, " ")
+        return StructuredLogSanitizer.truncateUtf8(flattened, ATTRIBUTE_MAX_BYTES)
+    }
+
     internal fun buildPayload(
         config: Config,
         name: String,
@@ -129,6 +235,9 @@ object MagiskOtel {
             stringAttr("service.version", config.serviceVersion),
             stringAttr("deployment.environment.name", config.environment),
         )
+        if (config.serviceCommit.isNotBlank()) {
+            resourceAttrs += stringAttr("service.commit", config.serviceCommit)
+        }
         if (config.projectId.isNotBlank()) {
             resourceAttrs += stringAttr("gitlab.project.id", config.projectId)
         }
@@ -137,6 +246,11 @@ object MagiskOtel {
         }
         AnonymousInstallationId.canonicalUuid(config.serviceInstanceId)?.let {
             resourceAttrs += stringAttr("service.instance.id", it)
+        }
+        config.deviceAttributes.forEach { (key, value) ->
+            if (key.isNotBlank() && value.isNotBlank()) {
+                resourceAttrs += stringAttr(key, value)
+            }
         }
 
         val spanAttrs = mutableListOf(stringAttr("magisk.event", name))
@@ -188,6 +302,7 @@ object MagiskOtel {
                     ?.trim()
                     .orEmpty()
                     .ifEmpty { "unknown" },
+            serviceCommit = System.getProperty("magisk.otel.commit")?.trim().orEmpty(),
             projectId = System.getProperty("magisk.otel.project_id").orEmpty(),
             projectName = System.getProperty("magisk.otel.project_name").orEmpty(),
             environment =
@@ -261,4 +376,20 @@ object MagiskOtel {
                 UUID.randomUUID().toString().replace("-", "")
         return raw.take(length)
     }
+
+    /** Attribute key carrying the failure or terminal reason identifier. */
+    const val ATTRIBUTE_REASON: String = "reason"
+
+    /** Folded reason emitted when a raw reason value is not a stable token. */
+    const val REASON_UNCLASSIFIED: String = "unclassified"
+
+    /** Longest accepted reason token; longer values fold to [REASON_UNCLASSIFIED]. */
+    const val REASON_MAX_CHARS: Int = 64
+
+    /** UTF-8 byte cap for non-reason attribute values. */
+    const val ATTRIBUTE_MAX_BYTES: Int = 256
+
+    private val REASON_TOKEN = Regex("[A-Za-z0-9_.]+")
+
+    private val CONTROL_CHARS = Regex("\\p{Cntrl}")
 }

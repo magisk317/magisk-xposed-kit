@@ -4,6 +4,10 @@ plugins {
 
 android {
     namespace = "io.github.magisk317.logging"
+
+    defaultConfig {
+        consumerProguardFiles("consumer-rules.pro")
+    }
 }
 
 dependencies {

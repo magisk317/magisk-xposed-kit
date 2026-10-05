@@ -202,6 +202,32 @@ class MagiskOtelTest {
     }
 
     @Test
+    fun `numeric reasons fold to unclassified`() {
+        assertEquals("unclassified", MagiskOtel.sanitizeReason("21"))
+        assertEquals("unclassified", MagiskOtel.sanitizeReason("3"))
+        assertEquals("non_display_failed", MagiskOtel.sanitizeReason("non_display_failed"))
+        assertEquals("a21", MagiskOtel.sanitizeReason("a21"))
+        assertEquals("v3.3.6", MagiskOtel.sanitizeReason("v3.3.6"))
+    }
+
+    @Test
+    fun `error text drops ipc_token query parameter`() {
+        val attrs = MagiskOtel.sanitizeAttributes(
+            mapOf(
+                "error" to
+                    "Unknown URL content://com.github.tianma8023.xposed.smscode.db.provider/sms_msg" +
+                        "?ipc_token=87d16f85-5086-41b4-9c86-f0b8cf57876e",
+            ),
+        )
+
+        assertEquals(
+            "Unknown URL content://com.github.tianma8023.xposed.smscode.db.provider/sms_msg",
+            attrs["error"],
+        )
+        assertFalse(attrs.getValue("error").contains("ipc_token"))
+    }
+
+    @Test
     fun `non-reason values are flattened and truncated`() {
         val attrs = MagiskOtel.sanitizeAttributes(
             mapOf(

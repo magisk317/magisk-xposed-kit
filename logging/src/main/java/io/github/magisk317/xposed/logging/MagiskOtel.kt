@@ -20,6 +20,23 @@ object MagiskOtel {
     const val DEFAULT_ENDPOINT: String =
         "https://136325658.otel.gitlab-o11y.com:14318/v1/traces"
 
+    /** Single source of truth for the anonymous-analytics opt-in preference key. */
+    const val KEY_ANALYTICS_ENABLED: String = "pref_enable_analytics"
+
+    /** Default analytics opt-in: ON in release, the user may opt out. */
+    const val ANALYTICS_ENABLED_DEFAULT: Boolean = true
+
+    /**
+     * Resolve whether telemetry should actually report.
+     *
+     * Debug/CI builds always report so development-time spans are never dropped;
+     * release builds follow the user's opt-in. [isDebugBuild] MUST be the embedding
+     * app's BuildConfig.DEBUG - the kit's own BuildConfig is unreliable here.
+     */
+    @JvmStatic
+    fun effectiveAnalyticsEnabled(userEnabled: Boolean, isDebugBuild: Boolean): Boolean =
+        isDebugBuild || userEnabled
+
     data class Config(
         val enabled: Boolean = false,
         val endpoint: String = DEFAULT_ENDPOINT,
@@ -204,7 +221,11 @@ object MagiskOtel {
             val safeKey = key.trim()
             if (safeKey.isNotEmpty()) {
                 sanitized[safeKey] =
-                    if (safeKey == ATTRIBUTE_REASON) sanitizeReason(value) else sanitizeValue(value)
+                    when (safeKey) {
+                        ATTRIBUTE_REASON -> sanitizeReason(value)
+                        ATTRIBUTE_ERROR -> sanitizeErrorText(value)
+                        else -> sanitizeValue(value)
+                    }
             }
         }
         return sanitized
@@ -214,12 +235,26 @@ object MagiskOtel {
         val trimmed = value.trim()
         if (trimmed.isEmpty() || trimmed.length > REASON_MAX_CHARS) return REASON_UNCLASSIFIED
         if (!REASON_TOKEN.matches(trimmed)) return REASON_UNCLASSIFIED
+        // A pure-numeric token carries no signal: it is a stray number from a raw message that
+        // reached the reason slot (observed as reason=21/3/16 leaking from exception text).
+        if (trimmed.all { it.isDigit() }) return REASON_UNCLASSIFIED
         return trimmed
     }
 
     internal fun sanitizeValue(value: String): String {
         val flattened = CONTROL_CHARS.replace(value, " ")
         return StructuredLogSanitizer.truncateUtf8(flattened, ATTRIBUTE_MAX_BYTES)
+    }
+
+    /**
+     * Sanitize an error/detail attribute value: flatten control characters, drop sensitive
+     * query parameters such as `ipc_token` from URIs so per-install secrets never reach the
+     * cloud side, then truncate to [ATTRIBUTE_MAX_BYTES].
+     */
+    internal fun sanitizeErrorText(value: String): String {
+        val flattened = CONTROL_CHARS.replace(value, " ")
+        val redacted = SENSITIVE_QUERY_PARAM.replace(flattened, "")
+        return StructuredLogSanitizer.truncateUtf8(redacted, ATTRIBUTE_MAX_BYTES)
     }
 
     internal fun buildPayload(
@@ -380,6 +415,9 @@ object MagiskOtel {
     /** Attribute key carrying the failure or terminal reason identifier. */
     const val ATTRIBUTE_REASON: String = "reason"
 
+    /** Attribute key carrying raw error or detail text. */
+    const val ATTRIBUTE_ERROR: String = "error"
+
     /** Folded reason emitted when a raw reason value is not a stable token. */
     const val REASON_UNCLASSIFIED: String = "unclassified"
 
@@ -390,6 +428,9 @@ object MagiskOtel {
     const val ATTRIBUTE_MAX_BYTES: Int = 256
 
     private val REASON_TOKEN = Regex("[A-Za-z0-9_.]+")
+
+    /** Sensitive query parameters stripped from error text before export (e.g. IPC tokens). */
+    private val SENSITIVE_QUERY_PARAM = Regex("[?&]ipc_token=[^&\\s]*&?")
 
     private val CONTROL_CHARS = Regex("\\p{Cntrl}")
 }

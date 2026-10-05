@@ -2,6 +2,8 @@ package io.github.magisk317.xposed.permission
 
 import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import java.util.concurrent.TimeUnit
 
 /**
@@ -25,26 +27,28 @@ object PermissionBridge {
     const val DEFAULT_TIMEOUT_MILLIS = 10_000L
 
     /** Shell commands granting [permission] through root, or null when it cannot be bridged. */
-    fun commandsFor(context: Context, permission: String): List<String>? {
-        val pkg = context.packageName
+    fun commandsFor(context: Context, permission: String): List<String>? =
+        commandsForPackage(context.packageName, permission)
+
+    private fun commandsForPackage(packageName: String, permission: String): List<String>? {
         return when (permission) {
             Manifest.permission.POST_NOTIFICATIONS,
             Manifest.permission.READ_CONTACTS,
             Manifest.permission.SEND_SMS,
             Manifest.permission.READ_PHONE_STATE,
-            -> listOf("pm grant $pkg $permission")
+            -> listOf("pm grant $packageName $permission")
 
             Manifest.permission.PACKAGE_USAGE_STATS ->
-                listOf("appops set $pkg GET_USAGE_STATS allow")
+                listOf("appops set $packageName GET_USAGE_STATS allow")
 
             Manifest.permission.SCHEDULE_EXACT_ALARM ->
-                listOf("appops set $pkg SCHEDULE_EXACT_ALARM allow")
+                listOf("appops set $packageName SCHEDULE_EXACT_ALARM allow")
 
             Manifest.permission.REQUEST_INSTALL_PACKAGES ->
-                listOf("appops set $pkg REQUEST_INSTALL_PACKAGES allow")
+                listOf("appops set $packageName REQUEST_INSTALL_PACKAGES allow")
 
             Manifest.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS ->
-                listOf("dumpsys deviceidle whitelist +$pkg")
+                listOf("dumpsys deviceidle whitelist +$packageName")
 
             else -> null
         }
@@ -87,6 +91,11 @@ object PermissionBridge {
     /**
      * Every command worth attempting at startup. Each one is idempotent, so this
      * is safe to run on every launch; without root every command fails fast.
+     *
+     * Permissions the app does not declare are skipped outright: `pm grant` and
+     * `appops set` of an undeclared permission can only exit non-zero, so a
+     * distribution that drops a permission (e.g. a Play build without the SMS
+     * channel) stops paying for its failing command on every launch.
      */
     fun bridgeCommands(
         context: Context,
@@ -94,17 +103,43 @@ object PermissionBridge {
         notificationListenerEnabled: Boolean,
         accessibilityServices: String?,
         accessibilityComponent: String?,
-    ): List<String> = buildList {
-        for (permission in BRIDGEABLE_PERMISSIONS) {
-            commandsFor(context, permission)?.let(::addAll)
-        }
-        if (!notificationListenerEnabled) {
-            add("cmd notification allow_listener $notificationListenerComponent")
-        }
-        if (accessibilityComponent != null) {
-            addAll(accessibilityCommands(accessibilityServices, accessibilityComponent))
+    ): List<String> {
+        val requestedPermissions = context.declaredPermissions()
+        return buildList {
+            addAll(permissionCommands(context.packageName, requestedPermissions))
+            if (!notificationListenerEnabled) {
+                add("cmd notification allow_listener $notificationListenerComponent")
+            }
+            if (accessibilityComponent != null) {
+                addAll(accessibilityCommands(accessibilityServices, accessibilityComponent))
+            }
         }
     }
+
+    /**
+     * Grant commands for the subset of [BRIDGEABLE_PERMISSIONS] the app actually
+     * declares, in declaration-list order. Pure over its inputs so callers and
+     * tests can pin the filtering without a live [Context].
+     */
+    internal fun permissionCommands(
+        packageName: String,
+        requestedPermissions: Set<String>,
+    ): List<String> = BRIDGEABLE_PERMISSIONS
+        .filter { it in requestedPermissions }
+        .flatMap { permission -> commandsForPackage(packageName, permission).orEmpty() }
+
+    private fun Context.declaredPermissions(): Set<String> = runCatching {
+        val packageInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            packageManager.getPackageInfo(
+                packageName,
+                PackageManager.PackageInfoFlags.of(PackageManager.GET_PERMISSIONS.toLong()),
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            packageManager.getPackageInfo(packageName, PackageManager.GET_PERMISSIONS)
+        }
+        packageInfo.requestedPermissions?.toSet().orEmpty()
+    }.getOrDefault(emptySet())
 
     /**
      * Runs [commands] through the root shell; a failure on one does not skip the rest.

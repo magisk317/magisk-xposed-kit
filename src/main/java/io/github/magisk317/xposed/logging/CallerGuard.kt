@@ -45,7 +45,9 @@ open class CallerGuard {
             delegate.isCallerAllowed(context)
 
         fun isPrivilegedUid(uid: Int, appUid: Int?): Boolean {
-            return uid == Process.SYSTEM_UID ||
+            return uid == Process.ROOT_UID ||
+                uid == 0 ||
+                uid == Process.SYSTEM_UID ||
                 uid == Process.PHONE_UID ||
                 (appUid != null && uid == appUid)
         }
@@ -95,7 +97,9 @@ class PackageCallerGuard(
 
     companion object {
         fun isPrivilegedUid(uid: Int, appUid: Int?, allowPhoneUid: Boolean = false): Boolean {
-            return uid == Process.SYSTEM_UID ||
+            return uid == Process.ROOT_UID ||
+                uid == 0 ||
+                uid == Process.SYSTEM_UID ||
                 (allowPhoneUid && uid == Process.PHONE_UID) ||
                 (appUid != null && uid == appUid)
         }

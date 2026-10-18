@@ -43,7 +43,7 @@ class XLogTest {
             },
         )
 
-        XLog.i("token=%s", "plaintext-secret")
+        XLog.i(message = "token=%s", "plaintext-secret")
 
         assertEquals(listOf("sanitize", "logcat", "xposed", "sink"), order)
         assertEquals(3, outputMessages.size)
@@ -60,7 +60,7 @@ class XLogTest {
         )
         XLog.setTestSink { _, message -> captured = message }
 
-        XLog.i("token=%s", "plaintext-secret")
+        XLog.i(message = "token=%s", "plaintext-secret")
 
         assertFalse(captured.orEmpty().contains("plaintext-secret"))
     }

@@ -11,9 +11,14 @@ import android.util.Log
  *
  * Usage:
  * ```
- * XLog.d("loading package: %s", packageName)
+ * XLog.d(message = "loading package: %s", packageName)
  * XLog.withRoute("sms_hook") { XLog.i("initialized") }
  * ```
+ *
+ * Overload-resolution caveat: with two positional String arguments, Kotlin
+ * prefers the (tag, message, vararg) overload over (message, vararg), so
+ * `XLog.d("fmt %s", arg)` would treat `"fmt %s"` as the tag and `arg` as the
+ * raw message. Always name the format string: `XLog.d(message = "fmt %s", arg)`.
  */
 object XLog {
 
@@ -35,6 +40,9 @@ object XLog {
     private var logToXposed: Boolean = false
 
     @Volatile
+    private var defaultRoute: String? = null
+
+    @Volatile
     private var testSink: ((Int, String) -> Unit)? = null
 
     @Volatile
@@ -51,12 +59,14 @@ object XLog {
         logToXposed: Boolean = false,
         sink: LogSink? = null,
         sanitizer: LogSanitizer = DefaultLogSanitizer,
+        defaultRoute: String? = null,
     ) {
         this.logTag = tag
         this.sLogLevel = logLevel
         this.logToXposed = logToXposed
         this.sink = sink
         this.sensitiveMessageSanitizer = sanitizer
+        this.defaultRoute = defaultRoute
     }
 
     @JvmStatic
@@ -75,8 +85,26 @@ object XLog {
         message: String,
         vararg args: Any?,
     ) {
+        log(priority, null, route, force, sensitive, message, *args)
+    }
+
+    /**
+     * Log with an explicit per-call [tag]. When [tag] is null the globally
+     * configured tag is used, so existing call sites keep working unchanged.
+     */
+    @JvmStatic
+    fun log(
+        priority: Int,
+        tag: String?,
+        route: String?,
+        force: Boolean,
+        sensitive: Boolean,
+        message: String,
+        vararg args: Any?,
+    ) {
         if (priority < sLogLevel) return
 
+        val effectiveTag = tag ?: logTag
         val formattedMessage = LogFormatter.formatArgs(message, args)
         val throwable = args.lastOrNull() as? Throwable
         val outputMessage = prepareForOutput(formattedMessage, sensitive)
@@ -90,18 +118,18 @@ object XLog {
             return
         }
 
-        printLog(priority, logTag, outputMessage)
+        printLog(priority, effectiveTag, outputMessage)
 
         if (logToXposed) {
-            printLog(priority, "LSPosed-Bridge", "$logTag: $outputMessage")
+            printLog(priority, "LSPosed-Bridge", "$effectiveTag: $outputMessage")
         }
 
         sink?.append(
             LogEvent(
                 level = LogLevel.fromPriority(priority),
-                tag = logTag,
+                tag = effectiveTag,
                 message = outputMessage,
-                route = route ?: routeContext.get(),
+                route = route ?: routeContext.get() ?: defaultRoute,
                 force = force,
                 sensitive = sensitive,
                 throwableText = outputThrowable,
@@ -152,6 +180,53 @@ object XLog {
         log(Log.ERROR, null, true, true, message, *args)
     }
 
+    // ── Tag-scoped API (per-call tag) ─────────────────────────────────────
+
+    @JvmStatic
+    fun v(tag: String, message: String, vararg args: Any?) =
+        log(Log.VERBOSE, tag, null, false, true, message, *args)
+
+    @JvmStatic
+    fun d(tag: String, message: String, vararg args: Any?) =
+        log(Log.DEBUG, tag, null, false, true, message, *args)
+
+    @JvmStatic
+    fun i(tag: String, message: String, vararg args: Any?) =
+        log(Log.INFO, tag, null, false, true, message, *args)
+
+    @JvmStatic
+    fun w(tag: String, message: String, vararg args: Any?) =
+        log(Log.WARN, tag, null, true, true, message, *args)
+
+    @JvmStatic
+    fun e(tag: String, message: String, vararg args: Any?) =
+        log(Log.ERROR, tag, null, true, true, message, *args)
+
+    /**
+     * Tag-scoped variants that also pin a route. Call these with the named
+     * argument form (`d(tag = ..., route = ..., message = ...)`) so the
+     * overload set stays unambiguous.
+     */
+    @JvmStatic
+    fun v(tag: String, route: String?, message: String, vararg args: Any?) =
+        log(Log.VERBOSE, tag, route, false, true, message, *args)
+
+    @JvmStatic
+    fun d(tag: String, route: String?, message: String, vararg args: Any?) =
+        log(Log.DEBUG, tag, route, false, true, message, *args)
+
+    @JvmStatic
+    fun i(tag: String, route: String?, message: String, vararg args: Any?) =
+        log(Log.INFO, tag, route, false, true, message, *args)
+
+    @JvmStatic
+    fun w(tag: String, route: String?, message: String, vararg args: Any?) =
+        log(Log.WARN, tag, route, true, true, message, *args)
+
+    @JvmStatic
+    fun e(tag: String, route: String?, message: String, vararg args: Any?) =
+        log(Log.ERROR, tag, route, true, true, message, *args)
+
     // ── Route context (ThreadLocal scoping) ───────────────────────────────
 
     @JvmStatic
@@ -201,6 +276,7 @@ object XLog {
         logTag = "magisk-xposed-kit"
         sLogLevel = Log.INFO
         logToXposed = false
+        defaultRoute = null
         routeContext.remove()
     }
 }

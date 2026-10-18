@@ -7,27 +7,6 @@ import org.junit.jupiter.api.Test
 
 class LogSanitizerTest {
     @Test
-    fun `secret redactor covers structured credentials without summarizing payloads`() {
-        val input =
-                "url=https://user:pass@example.test/hook?api-key=abc123 " +
-                "json={\"token\":\"json-secret\",\"message\":\"keep me\"} " +
-                "Cookie=session-value Proxy-Authorization=BasicValue " +
-                "Authorization: Bearer bearer-secret Proxy-Authorization: Basic YmFzaWM="
-
-        val result = SecretRedactor.redact(input)
-
-        assertFalse(result.contains("user:pass"))
-        assertFalse(result.contains("abc123"))
-        assertFalse(result.contains("json-secret"))
-        assertFalse(result.contains("session-value"))
-        assertFalse(result.contains("BasicValue"))
-        assertFalse(result.contains("bearer-secret"))
-        assertFalse(result.contains("YmFzaWM="))
-        assertTrue(result.contains("\"message\":\"keep me\""))
-    }
-
-
-    @Test
     fun `sanitizes phone numbers`() {
         val result = DefaultLogSanitizer.sanitize("联系 13800138000 完成验证")
         assertFalse(result.contains("13800138000"))

@@ -22,7 +22,7 @@ class StructuredXLogThrowableTest {
         )
         XLog.setLogPrinterForTest { _, _, _ -> }
 
-        XLog.e("hook failed: %s", "sms", IllegalStateException("boom"))
+        XLog.e(message = "hook failed: %s", "sms", IllegalStateException("boom"))
 
         assertTrue(captured?.message.orEmpty().contains("hook failed: sms"))
         assertTrue(captured?.throwableText.orEmpty().contains("IllegalStateException: boom"))

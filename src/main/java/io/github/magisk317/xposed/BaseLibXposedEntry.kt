@@ -276,7 +276,9 @@ abstract class BaseLibXposedEntry : XposedModule {
         }
         logDebug("Loaded package: ${loadParam.packageName} process: ${loadParam.processName}")
         if ("android" == loadParam.packageName || "system" == loadParam.packageName) {
-            logWarn("Android/system package loaded: pkg=%s process=%s",
+            // Expected on every boot for the system_server process; keep at debug level so the
+            // framework log is not flooded with warnings for a normal dispatch.
+            logDebug("Android/system package loaded: pkg=%s process=%s",
                 loadParam.packageName, loadParam.processName)
         }
         // Hooks and postDispatch may touch LoadedApk (e.g. createPackageContext), which the

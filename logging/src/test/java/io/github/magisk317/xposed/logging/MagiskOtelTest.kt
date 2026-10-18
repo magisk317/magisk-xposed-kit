@@ -248,4 +248,109 @@ class MagiskOtelTest {
         assertFalse(attrs.containsKey("  "))
         assertEquals("insert_failed", attrs["reason"])
     }
+
+    @Test
+    fun `buildPayload resolves a late installation id through the provider`() {
+        val payload =
+            MagiskOtel.buildPayload(
+                config =
+                    MagiskOtel.Config(
+                        enabled = true,
+                        serviceName = "xposedsmscode",
+                        serviceInstanceId = "",
+                        serviceInstanceIdProvider = { "02c1f46d-581e-4f80-9747-9b9dcb99bc46" },
+                    ),
+                name = "sms.parse",
+                attributes = emptyMap(),
+                statusOk = true,
+                nowNanos = 1_000_000_000L,
+            )
+
+        assertTrue(payload.contains("service.instance.id"))
+        assertTrue(payload.contains("02c1f46d-581e-4f80-9747-9b9dcb99bc46"))
+    }
+
+    @Test
+    fun `provider miss is retried only after the backoff window`() {
+        var calls = 0
+        var value = ""
+        val config =
+            MagiskOtel.Config(
+                enabled = true,
+                serviceName = "xposedsmscode",
+                serviceInstanceIdProvider = {
+                    calls++
+                    value
+                },
+            )
+
+        val first = MagiskOtel.buildPayload(config, "sms.parse", emptyMap(), true, nowNanos = 1_000_000_000L)
+        assertFalse(first.contains("service.instance.id"))
+        assertEquals(1, calls)
+
+        // Same millisecond again: the negative cache must suppress the provider call entirely.
+        MagiskOtel.buildPayload(config, "sms.parse", emptyMap(), true, nowNanos = 1_000_000_000L)
+        assertEquals(1, calls)
+
+        value = "02c1f46d-581e-4f80-9747-9b9dcb99bc46"
+        val healed =
+            MagiskOtel.buildPayload(
+                config,
+                "sms.parse",
+                emptyMap(),
+                true,
+                nowNanos = 61_001_000_000L,
+            )
+        assertEquals(2, calls)
+        assertTrue(healed.contains("02c1f46d-581e-4f80-9747-9b9dcb99bc46"))
+
+        // A resolved id is sticky: no further provider traffic on later spans.
+        MagiskOtel.buildPayload(config, "sms.parse", emptyMap(), true, nowNanos = 90_001_000_000L)
+        assertEquals(2, calls)
+    }
+
+    @Test
+    fun `throwing provider degrades to no instance id`() {
+        val payload =
+            MagiskOtel.buildPayload(
+                config =
+                    MagiskOtel.Config(
+                        enabled = true,
+                        serviceName = "xposedsmscode",
+                        serviceInstanceIdProvider = { error("provider unavailable") },
+                    ),
+                name = "sms.parse",
+                attributes = emptyMap(),
+                statusOk = true,
+                nowNanos = 1_000_000_000L,
+            )
+
+        assertFalse(payload.contains("service.instance.id"))
+    }
+
+    @Test
+    fun `captured instance id wins over the provider`() {
+        var calls = 0
+        val payload =
+            MagiskOtel.buildPayload(
+                config =
+                    MagiskOtel.Config(
+                        enabled = true,
+                        serviceName = "xposedsmscode",
+                        serviceInstanceId = "02c1f46d-581e-4f80-9747-9b9dcb99bc46",
+                        serviceInstanceIdProvider = {
+                            calls++
+                            "9f7e2b1a-0000-4000-8000-000000000000"
+                        },
+                    ),
+                name = "sms.parse",
+                attributes = emptyMap(),
+                statusOk = true,
+                nowNanos = 1_000_000_000L,
+            )
+
+        assertEquals(0, calls)
+        assertTrue(payload.contains("02c1f46d-581e-4f80-9747-9b9dcb99bc46"))
+        assertFalse(payload.contains("9f7e2b1a"))
+    }
 }

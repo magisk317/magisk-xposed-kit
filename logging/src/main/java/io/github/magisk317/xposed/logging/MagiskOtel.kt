@@ -17,6 +17,9 @@ import java.util.concurrent.atomic.AtomicReference
 object MagiskOtel {
     private const val NANOS_PER_MILLI = 1_000_000L
 
+    /** Back-off after a failed installation-id lookup; long enough to skip per-span IPC storms. */
+    private const val INSTANCE_ID_RETRY_MS = 60_000L
+
     const val DEFAULT_ENDPOINT: String =
         "https://136325658.otel.gitlab-o11y.com:14318/v1/traces"
 
@@ -52,7 +55,21 @@ object MagiskOtel {
         val projectId: String = "",
         val projectName: String = "",
         val environment: String = "device",
+        /**
+         * Installation id captured at configure time. Empty means "not resolvable yet": the
+         * exporter then falls back to [serviceInstanceIdProvider] on every span until one read
+         * succeeds, instead of freezing an empty value for the whole process lifetime.
+         *
+         * This matters for hook processes, where the id lives in the module's preferences behind
+         * a remote provider that may not be bound yet when hooks install.
+         */
         val serviceInstanceId: String = "",
+        /**
+         * Lazy installation-id source consulted while [serviceInstanceId] is blank (or not a
+         * UUID). Consumers pass a preference/provider read here; the kit caches the first valid
+         * value for the process and backs off briefly after a miss so a per-span read stays cheap.
+         */
+        val serviceInstanceIdProvider: (() -> String?)? = null,
         /**
          * Device dimension resource attributes (e.g. device.manufacturer /
          * device.model / os.version). Consumers fill these from android.os.Build at
@@ -76,6 +93,20 @@ object MagiskOtel {
     )
 
     private val configRef = AtomicReference<Config?>(null)
+
+    /**
+     * First valid installation id seen in this process for [cachedInstanceIdOwner]. Keyed by
+     * identity so a reconfigured process (and each unit test) resolves against its own [Config]
+     * instead of inheriting another one's value.
+     */
+    @Volatile
+    private var cachedInstanceIdOwner: Config? = null
+    @Volatile
+    private var cachedInstanceId: String? = null
+
+    /** Earliest time (epoch ms) at which a failed [Config.serviceInstanceIdProvider] may retry. */
+    @Volatile
+    private var instanceIdRetryAtMs: Long = 0L
     private val executor =
         Executors.newSingleThreadExecutor(
             ThreadFactory { runnable ->
@@ -279,7 +310,7 @@ object MagiskOtel {
         if (config.projectName.isNotBlank()) {
             resourceAttrs += stringAttr("gitlab.project.name", config.projectName)
         }
-        AnonymousInstallationId.canonicalUuid(config.serviceInstanceId)?.let {
+        resolveInstanceId(config, nowNanos / NANOS_PER_MILLI)?.let {
             resourceAttrs += stringAttr("service.instance.id", it)
         }
         config.deviceAttributes.forEach { (key, value) ->
@@ -310,6 +341,43 @@ object MagiskOtel {
             append("\"status\":{\"code\":").append(statusCode).append("}")
             append("}]}]}]}")
         }
+    }
+
+    /**
+     * Resolve the anonymous installation id for a span.
+     *
+     * Order: the value captured in [Config.serviceInstanceId], then the lazy provider, then
+     * nothing. A miss is negative-cached for [INSTANCE_ID_RETRY_MS] so a broken provider cannot
+     * turn every span into an IPC round trip, while a provider that binds late still heals the
+     * process within a minute. Never throws.
+     */
+    internal fun resolveInstanceId(
+        config: Config,
+        nowMs: Long = System.currentTimeMillis(),
+    ): String? {
+        if (cachedInstanceIdOwner === config) {
+            cachedInstanceId?.let { return it }
+        } else {
+            cachedInstanceIdOwner = config
+            cachedInstanceId = null
+            instanceIdRetryAtMs = 0L
+        }
+        AnonymousInstallationId.canonicalUuid(config.serviceInstanceId)?.let {
+            cachedInstanceId = it
+            return it
+        }
+        val provider = config.serviceInstanceIdProvider ?: return null
+        if (nowMs < instanceIdRetryAtMs) return null
+        val fromProvider =
+            runCatching { provider.invoke() }
+                .getOrNull()
+                ?.let { AnonymousInstallationId.canonicalUuid(it) }
+        if (fromProvider == null) {
+            instanceIdRetryAtMs = nowMs + INSTANCE_ID_RETRY_MS
+            return null
+        }
+        cachedInstanceId = fromProvider
+        return fromProvider
     }
 
     private fun resolveConfig(fallbackServiceHint: String): Config? {

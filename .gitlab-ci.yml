@@ -1,0 +1,34 @@
+# GitLab owns this repository: source, dependency automation and CI all run
+# here. GitHub keeps only a redundancy copy of the default branch and the tags,
+# produced by the shared mirror anchor in magisk-ci-toolkit. See that
+# repository's docs/hosting-cutover.md before changing anything about the
+# mirror.
+workflow:
+  rules:
+    # Every pipeline other than a ref push would contain no jobs at all: the
+    # only job in this file is the mirror. Merge-request automerge does not gate
+    # on pipeline status (magisk-ci-toolkit ci/auto_merge_upstream_mr.sh), so
+    # suppressing MR pipelines here is not a merge blocker.
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+    - when: never
+
+include:
+  # One exact toolkit SHA, the same for every include below. A moving tag would
+  # change what this repository runs without producing a commit here, so a pipeline
+  # could differ from its own history with no diff to explain it -- the toolkit
+  # deleted its v1 tag on 2026-10-21 for that reason. Re-pointing this SHA is the
+  # deliberate, reviewable way to take a toolkit change.
+  - project: magisk3171/shared/magisk-ci-toolkit
+    ref: 5a9cef57abe852dc7798664e03ad50256a0204dd
+    file: /.gitlab/ci/utility.yml
+  - project: magisk3171/shared/magisk-ci-toolkit
+    ref: 5a9cef57abe852dc7798664e03ad50256a0204dd
+    file: /.gitlab/ci/github-sync.yml
+
+stages:
+  - sync
+
+sync:github:
+  extends: .magisk_github_sync
+  variables:
+    MAGISK_GITHUB_MIRROR_REPOSITORY: "magisk317/magisk-xposed-kit"

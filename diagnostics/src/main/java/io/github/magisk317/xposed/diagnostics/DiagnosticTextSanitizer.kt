@@ -23,6 +23,7 @@ object DiagnosticTextSanitizer {
     private const val STREAM_BUFFER_CHARS = 128 * 1024
     private const val SANITIZE_PARALLELISM_CAP = 8
 
+    /** Redact every text log under [root]; returns how many files actually changed. */
     fun sanitizeDirectory(
         root: File,
         sanitizeText: (String) -> String,
@@ -30,20 +31,21 @@ object DiagnosticTextSanitizer {
         onWarning: (String) -> Unit = {},
         includeFile: (File) -> Boolean = { true },
         parallel: Boolean = true,
-    ) {
-        if (!root.exists()) return
+    ): Int {
+        if (!root.exists()) return 0
         val files = root.walkTopDown()
             .filter(File::isFile)
             .filter(includeFile)
             .filter(::shouldSanitizeLogFile)
             .toList()
-        if (files.isEmpty()) return
+        if (files.isEmpty()) return 0
 
         if (!parallel || files.size == 1) {
+            var serialChanged = 0
             files.forEach { file ->
-                sanitizeTextLogFile(file, sanitizeText, maxFileBytes, onWarning)
+                if (sanitizeTextLogFile(file, sanitizeText, maxFileBytes, onWarning)) serialChanged += 1
             }
-            return
+            return serialChanged
         }
 
         val workers = Runtime.getRuntime().availableProcessors()
@@ -52,11 +54,14 @@ object DiagnosticTextSanitizer {
             .coerceAtMost(files.size)
         val pool = Executors.newFixedThreadPool(workers)
         val failures = AtomicInteger(0)
+        val changed = AtomicInteger(0)
         try {
             val futures: List<Future<*>> = files.map { file ->
                 pool.submit {
                     runCatching {
-                        sanitizeTextLogFile(file, sanitizeText, maxFileBytes, onWarning)
+                        if (sanitizeTextLogFile(file, sanitizeText, maxFileBytes, onWarning)) {
+                            changed.incrementAndGet()
+                        }
                     }.onFailure {
                         failures.incrementAndGet()
                         onWarning(
@@ -76,6 +81,7 @@ object DiagnosticTextSanitizer {
         if (failures.get() > 0) {
             onWarning("sanitizeDirectory completed with failures=${failures.get()}")
         }
+        return changed.get()
     }
 
     fun sanitizeTextLogFile(

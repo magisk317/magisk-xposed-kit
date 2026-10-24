@@ -5,6 +5,11 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.core.content.FileProvider
+import io.github.magisk317.xposed.logging.DefaultLogSanitizer
+import io.github.magisk317.xposed.logging.MagiskLogPolicy
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -15,11 +20,16 @@ import java.util.zip.ZipOutputStream
 /**
  * Product-agnostic archive pipeline for diagnostic log bundles.
  *
- * Collectors remain product-specific; this helper only owns staging, ZIP packaging,
- * directory copy/clear helpers, and share-intent construction.
+ * Collectors remain product-specific; this helper owns staging, ZIP packaging, directory
+ * copy/clear helpers, share-intent construction, the bundle header, the export gate and the
+ * redaction pass. The gate keeps a release from producing an archive at all; the redaction pass
+ * stays as defense in depth, because logcat, LSPosed logs and crash traces arrive as raw files
+ * from `su` and `copyFile`, so no collector may leak them on the way into the archive.
  */
 object DiagnosticArchive {
     private const val ZIP_MIME_TYPE = "application/zip"
+    private const val SUMMARY_FILE_NAME = "summary.txt"
+    private const val IDENTITY_FILE_NAME = "build_identity.json"
 
     data class BundleResult(
         val file: File?,
@@ -32,7 +42,7 @@ object DiagnosticArchive {
     )
 
     fun buildBundle(
-        context: Context,
+        identity: DiagnosticBundleIdentity,
         timestamp: String,
         exportDir: File,
         exportFilePrefix: String,
@@ -45,6 +55,12 @@ object DiagnosticArchive {
         makeWorldReadable: Boolean = true,
         worldReadableParentDepth: Int = 2,
     ): BundleResult {
+        val policy = MagiskLogPolicy.current()
+        if (!policy.allowsLogExport) {
+            val details = "log export disabled: release build"
+            onError(details, null)
+            return BundleResult(null, details)
+        }
         if (!ensureDirectory(exportDir, recreateWhenFile = true, onWarning = onWarning)) {
             val details = "export root unavailable: ${exportDir.absolutePath}"
             onError(details, null)
@@ -65,14 +81,32 @@ object DiagnosticArchive {
         val details = mutableListOf<String>()
         val result = runCatching {
             collect(stagingDir, details)
+            val mode = DiagnosticExportMode.of(policy)
+            if (policy.sanitizesText) {
+                val redacted = DiagnosticTextSanitizer.sanitizeDirectory(
+                    root = stagingDir,
+                    sanitizeText = DefaultLogSanitizer::sanitizeUnbounded,
+                    onWarning = onWarning,
+                )
+                details += "sanitized: $redacted file(s) redacted"
+            } else {
+                details += "sanitized: off (plaintext build)"
+            }
             // Always emit a shareable summary-only ZIP, even when no log sources were
             // collected, so UI can offer a normal share flow instead of a false failure.
-            File(stagingDir, "summary.txt").writeText(
+            File(stagingDir, SUMMARY_FILE_NAME).writeText(
                 buildString {
                     appendLine("Export Time: $timestamp")
-                    appendLine("Package: ${context.packageName}")
+                    identity.summaryLines().forEach { appendLine(it) }
+                    appendLine(
+                        "Log Policy: mode=${mode.name} verbose=${policy.verboseLogging} " +
+                            "sanitized=${policy.sanitizesText}",
+                    )
                     details.forEach { appendLine("- $it") }
                 },
+            )
+            File(stagingDir, IDENTITY_FILE_NAME).writeText(
+                buildIdentityJson(timestamp = timestamp, mode = mode, identity = identity, policy = policy).toString(),
             )
             val zipFile = File(exportDir, "$exportFilePrefix$timestamp.zip")
             zipDirectory(stagingDir, zipFile, onWarning)
@@ -221,6 +255,19 @@ object DiagnosticArchive {
             current?.setExecutable(true, false)
             current = current?.parentFile
         }
+    }
+
+    private fun buildIdentityJson(
+        timestamp: String,
+        mode: DiagnosticExportMode,
+        identity: DiagnosticBundleIdentity,
+        policy: MagiskLogPolicy.Snapshot,
+    ): JsonObject = buildJsonObject {
+        put("exportTime", timestamp)
+        put("exportMode", mode.name)
+        put("verboseLogging", policy.verboseLogging)
+        put("sanitizesText", policy.sanitizesText)
+        identity.jsonFields().forEach { (name, value) -> put(name, value) }
     }
 
     private fun zipDirectory(sourceDir: File, outputZip: File, onWarning: (String) -> Unit) {

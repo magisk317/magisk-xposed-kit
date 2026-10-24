@@ -1,11 +1,13 @@
 package io.github.magisk317.xposed.diagnostics
 
-import android.content.Context
-import io.mockk.every
-import io.mockk.mockk
+import io.github.magisk317.xposed.logging.MagiskLogPolicy
 import java.io.File
+import java.io.FileInputStream
+import java.util.zip.ZipInputStream
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -13,6 +15,45 @@ import org.junit.jupiter.api.io.TempDir
 class DiagnosticArchiveTest {
     @TempDir
     lateinit var tempDir: File
+
+    private val identity = DiagnosticBundleIdentity.of(
+        product = "smscode",
+        packageName = "github.tornaco.android.thanatos",
+        versionName = "3.2.1",
+        versionCode = "32100",
+        distributionChannel = "beta",
+        commitSha = "8417b2ef3",
+    )
+
+    @AfterEach
+    fun resetPolicy() {
+        MagiskLogPolicy.install(isDebugBuild = false)
+    }
+
+    private fun exportWith(collect: (File, MutableList<String>) -> Unit): DiagnosticArchive.BundleResult {
+        val exportDir = File(tempDir, "export").apply { mkdirs() }
+        return DiagnosticArchive.buildBundle(
+            identity = identity,
+            timestamp = "fixed",
+            exportDir = exportDir,
+            exportFilePrefix = DiagnosticBundleNames.exportFilePrefix("smscode"),
+            stagingDirPrefix = DiagnosticBundleNames.stagingDirPrefix("smscode"),
+            collect = collect,
+            makeWorldReadable = false,
+        )
+    }
+
+    private fun zipEntries(zip: File): Map<String, String> {
+        val entries = linkedMapOf<String, String>()
+        ZipInputStream(FileInputStream(zip)).use { input ->
+            while (true) {
+                val entry = input.nextEntry ?: break
+                entries[entry.name] = input.readBytes().decodeToString()
+                input.closeEntry()
+            }
+        }
+        return entries
+    }
 
     @Test
     fun copyDirectory_appliesFilterAndPreservesPaths() {
@@ -56,41 +97,31 @@ class DiagnosticArchiveTest {
 
     @Test
     fun buildBundle_producesShareableZipWhenNoLogsCollected() {
-        val exportDir = File(tempDir, "export").apply { mkdirs() }
-        val context = mockk<Context>()
-        every { context.packageName } returns "test.pkg"
+        MagiskLogPolicy.install(isDebugBuild = true)
 
-        val result = DiagnosticArchive.buildBundle(
-            context = context,
-            timestamp = "fixed",
-            exportDir = exportDir,
-            exportFilePrefix = "logs_",
-            stagingDirPrefix = ".tmp_",
-            collect = { _, details -> details += "app log missing" },
-            makeWorldReadable = false,
-        )
+        val result = exportWith { _, details -> details += "app log missing" }
 
         val zip = result.file
-        assertTrue(zip != null && zip.isFile && zip.length() > 0)
-        assertEquals(File(exportDir, "logs_fixed.zip"), zip)
+        assertNotNull(zip)
+        assertTrue(zip!!.isFile && zip.length() > 0)
+        assertEquals(File(tempDir, "export/smscode_logs_fixed.zip"), zip)
         assertTrue(result.details.contains("app log missing"))
-        assertTrue(exportDir.listFiles().orEmpty().none { it.name.startsWith(".tmp_") })
+        assertTrue(tempDir.resolve("export").listFiles().orEmpty().none { it.name.startsWith(".tmp_") })
     }
 
     @Test
     fun buildBundle_stopsWhenStaleStagingCannotBeDeleted() {
+        MagiskLogPolicy.install(isDebugBuild = true)
         val exportDir = File(tempDir, "export").apply { mkdirs() }
-        File(exportDir, ".tmp_fixed").mkdirs()
+        File(exportDir, ".tmp_smscode_logs_fixed").mkdirs()
         var collected = false
-        val context = mockk<Context>()
-        every { context.packageName } returns "test.pkg"
 
         val result = DiagnosticArchive.buildBundle(
-            context = context,
+            identity = identity,
             timestamp = "fixed",
             exportDir = exportDir,
-            exportFilePrefix = "logs_",
-            stagingDirPrefix = ".tmp_",
+            exportFilePrefix = DiagnosticBundleNames.exportFilePrefix("smscode"),
+            stagingDirPrefix = DiagnosticBundleNames.stagingDirPrefix("smscode"),
             deletePath = { false },
             collect = { _, _ -> collected = true },
             makeWorldReadable = false,
@@ -99,5 +130,50 @@ class DiagnosticArchiveTest {
         assertFalse(collected)
         assertEquals(null, result.file)
         assertTrue(result.details.startsWith("staging cleanup failed:"))
+    }
+
+    @Test
+    fun `a release build refuses to export`() {
+        MagiskLogPolicy.install(isDebugBuild = false)
+        var collected = false
+
+        val result = exportWith { _, _ -> collected = true }
+
+        assertFalse(collected)
+        assertEquals(null, result.file)
+        assertTrue(result.details.contains("log export disabled"))
+        assertTrue(tempDir.resolve("export").listFiles().orEmpty().none { it.name.endsWith(".zip") })
+    }
+
+    @Test
+    fun `a verbose build says so instead of silently exporting raw text`() {
+        MagiskLogPolicy.install(isDebugBuild = true)
+
+        val result = exportWith { stagingDir, _ ->
+            File(stagingDir, "logcat").mkdirs()
+            File(stagingDir, "logcat/logcat_all.txt").writeText("from=13800138000")
+        }
+
+        val summary = zipEntries(result.file!!).getValue("summary.txt")
+        assertTrue(summary.contains("sanitized: off (plaintext build)"))
+        assertTrue(summary.contains("Log Policy: mode=FULL verbose=true sanitized=false"))
+    }
+
+    @Test
+    fun `every bundle states which device and build produced it`() {
+        MagiskLogPolicy.install(isDebugBuild = true)
+
+        val result = exportWith { _, _ -> }
+
+        val entries = zipEntries(result.file!!)
+        val summary = entries.getValue("summary.txt")
+        assertTrue(summary.contains("Product: smscode"))
+        assertTrue(summary.contains("channel=beta commit=8417b2ef3"))
+        assertTrue(summary.contains("Libraries: kit="))
+        assertTrue(summary.contains("Device: "))
+        val json = entries.getValue("build_identity.json")
+        assertTrue(json.contains("\"distributionChannel\":\"beta\""))
+        assertTrue(json.contains("\"product\":\"smscode\""))
+        assertTrue(json.contains("\"exportMode\":\"FULL\""))
     }
 }

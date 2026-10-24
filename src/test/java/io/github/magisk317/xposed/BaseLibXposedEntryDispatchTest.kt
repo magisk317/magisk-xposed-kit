@@ -103,10 +103,68 @@ class BaseLibXposedEntryDispatchTest {
         assertTrue(throwing.called, "hook should still have been invoked")
     }
 
+    @Test
+    fun `deferred hook skips packageLoaded and runs once at packageReady`() {
+        val deferred = DeferredRecordingHook()
+        val deferredEntry = TestEntry(deferred)
+        val loader = TestClassLoader()
+
+        deferredEntry.dispatch("com.taobao.idlefish", loader, phase = "packageLoaded")
+        assertTrue(deferred.loaders.isEmpty(), "deferred hook must not run inside createAppFactory")
+
+        deferredEntry.dispatch("com.taobao.idlefish", loader, phase = "packageReady")
+        deferredEntry.dispatch("com.taobao.idlefish", loader, phase = "packageReady")
+
+        assertEquals(listOf<ClassLoader>(loader), deferred.loaders)
+    }
+
+    @Test
+    fun `deferred hook runs when the first dispatch is already a ready phase`() {
+        val deferred = DeferredRecordingHook()
+        val deferredEntry = TestEntry(deferred)
+        val loader = TestClassLoader()
+
+        deferredEntry.dispatch("com.taobao.idlefish", loader, phase = "moduleLoadedCurrentProcess")
+
+        assertEquals(listOf<ClassLoader>(loader), deferred.loaders)
+    }
+
+    @Test
+    fun `eager hooks keep running at packageLoaded when a deferred hook is present`() {
+        val eager = RecordingHook()
+        val deferred = DeferredRecordingHook()
+        val mixedEntry = TestEntry(eager, deferred)
+        val loader = TestClassLoader()
+
+        mixedEntry.dispatch("com.taobao.idlefish", loader, phase = "packageLoaded")
+
+        assertEquals(listOf<ClassLoader>(loader), eager.loaders)
+        assertTrue(deferred.loaders.isEmpty(), "only the opted-in hook is deferred")
+
+        mixedEntry.dispatch("com.taobao.idlefish", loader, phase = "packageReady")
+
+        assertEquals(listOf<ClassLoader>(loader), eager.loaders, "eager hook must not run twice")
+        assertEquals(listOf<ClassLoader>(loader), deferred.loaders)
+    }
+
+    @Test
+    fun `deferred hook runs on packageReady after a provisional packageLoaded`() {
+        val deferred = DeferredRecordingHook()
+        val deferredEntry = TestEntry(deferred)
+
+        deferredEntry.onPackageLoaded(packageLoadedParam("com.taobao.idlefish", defaultClassLoader = null))
+        assertTrue(deferred.loaders.isEmpty())
+
+        val real = TestClassLoader()
+        deferredEntry.onPackageReady(packageReadyParam("com.taobao.idlefish", real))
+
+        assertEquals(listOf<ClassLoader>(real), deferred.loaders)
+    }
+
     // -- Helpers --
 
-    private class TestEntry(private val hook: BaseHook) : BaseLibXposedEntry() {
-        override val hooks: List<BaseHook> get() = listOf(hook)
+    private class TestEntry(vararg hooks: BaseHook) : BaseLibXposedEntry() {
+        override val hooks: List<BaseHook> = hooks.toList()
 
         override fun installModuleRuntime(module: XposedModule, hookApi: LibXposedHookApi) {}
 
@@ -119,6 +177,16 @@ class BaseLibXposedEntryDispatchTest {
 
     private class RecordingHook : BaseHook() {
         val loaders = mutableListOf<ClassLoader>()
+
+        override fun onLoadPackage(param: LoadParam) {
+            loaders += param.classLoader
+        }
+    }
+
+    private class DeferredRecordingHook : BaseHook() {
+        val loaders = mutableListOf<ClassLoader>()
+
+        override fun deferUntilPackageReady(): Boolean = true
 
         override fun onLoadPackage(param: LoadParam) {
             loaders += param.classLoader

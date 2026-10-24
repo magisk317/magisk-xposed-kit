@@ -13,6 +13,19 @@ open class BaseHook {
     /** If true, [onLoadPackage] will be called for each loaded package. */
     open fun hookOnLoadPackage(): Boolean = true
 
+    /**
+     * If true, [onLoadPackage] is deferred from the packageLoaded callback to a callback where
+     * the target classLoader is fully constructed (packageReady, hotReload,
+     * moduleLoadedCurrentProcess, systemServerStarting).
+     *
+     * Enable this for hooks that load target classes, install process-wide probes, or reflect
+     * over members: running them inside `LoadedApk.createAppFactory` can deadlock on class
+     * initialization while the framework still holds the LoadedApk lock.
+     *
+     * The default is false, preserving the historical packageLoaded dispatch.
+     */
+    open fun deferUntilPackageReady(): Boolean = false
+
     /** If true, [initZygote] will be called during module initialization. */
     open fun hookInitZygote(): Boolean = false
 

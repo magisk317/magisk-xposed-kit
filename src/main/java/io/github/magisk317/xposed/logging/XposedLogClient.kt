@@ -263,7 +263,7 @@ object XposedLogClient {
             force = force,
             sensitive = sensitive,
             packageName = localContext?.packageName ?: "",
-            processName = ProcessNameResolver.currentProcessName(),
+            processName = runCatching { ProcessNameResolver.currentProcessName() }.getOrNull() ?: "",
             pid = Process.myPid(),
             uid = Process.myUid(),
         )

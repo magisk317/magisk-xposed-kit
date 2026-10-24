@@ -23,7 +23,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * - Hot reload state serialization/deserialization
  * - ClassLoader resolution via ActivityThread reflection
  * - System server ClassLoader sentinel class detection
- * - Hook dispatch loop with deduplication
+ * - Hook dispatch loop with deduplication and ready-phase deferral
  *
  * Subclasses must implement:
  * - [hooks]: the list of [BaseHook] instances to dispatch
@@ -86,6 +86,15 @@ abstract class BaseLibXposedEntry : XposedModule {
      * working hooks until the process restarts.
      */
     private val dispatchedPackages = ConcurrentHashMap<String, String>()
+
+    /**
+     * Hooks deferred to a ready-phase callback, keyed by loaderKey plus hook identity.
+     *
+     * Package-level dedup intentionally drops the packageReady callback once packageLoaded has
+     * consumed the key. Deferred hooks still need that second callback, so they get their own
+     * one-shot bookkeeping and are cleared together with [dispatchedPackages] on hot reload.
+     */
+    private val dispatchedDeferredHooks = ConcurrentHashMap.newKeySet<String>()
 
     /** Per-package dispatch counter, bounding retries when loader resolution keeps changing. */
     private val dispatchCounts = ConcurrentHashMap<String, AtomicInteger>()
@@ -216,6 +225,7 @@ abstract class BaseLibXposedEntry : XposedModule {
             // Hooks were torn down in onHotReloading, so previous dispatch bookkeeping no longer
             // reflects installed state. Clearing it lets every restored package dispatch again.
             dispatchedPackages.clear()
+            dispatchedDeferredHooks.clear()
             dispatchCounts.clear()
             restoreHotReloadState(param.savedInstanceState, oldHookHandles)
             val currentTargets = resolveCurrentProcessTargets(param, oldHookHandles)
@@ -255,6 +265,11 @@ abstract class BaseLibXposedEntry : XposedModule {
         if (previousPhase != null) {
             logDebug("skip duplicate package dispatch: pkg=%s process=%s phase=%s previous=%s",
                 loadParam.packageName, loadParam.processName, phase, previousPhase)
+            // Eager hooks already ran for this loader, but deferred hooks deliberately skipped the
+            // earlier callback. A ready phase is their cue to run.
+            if (isReadyDispatchPhase(phase)) {
+                dispatchDeferredHooks(loadParam, loaderKey, phase)
+            }
             return
         }
         logInfo("dispatchLoad entering for pkg=${loadParam.packageName} process=${loadParam.processName} phase=$phase")
@@ -289,6 +304,10 @@ abstract class BaseLibXposedEntry : XposedModule {
             logInfo("dispatchLoad dispatching hooks for pkg=${loadParam.packageName} process=${loadParam.processName} hookCount=${hooks.size}")
             for (hook in hooks) {
                 val hookName = hook.javaClass.simpleName
+                if (hook.deferUntilPackageReady()) {
+                    logInfo("dispatchLoad deferring hook=$hookName pkg=${loadParam.packageName} phase=$phase")
+                    continue
+                }
                 val shouldLoad = hook.hookOnLoadPackage()
                 logInfo("dispatchLoad hook=$hookName shouldLoad=$shouldLoad pkg=${loadParam.packageName}")
                 if (!shouldLoad) continue
@@ -301,11 +320,52 @@ abstract class BaseLibXposedEntry : XposedModule {
                         loadParam.packageName, loadParam.processName, throwable)
                 }
             }
+            if (isReadyDispatchPhase(phase)) {
+                runDeferredHooks(loadParam, loaderKey, phase)
+            }
             postDispatch(loadParam)
         } finally {
             dispatching.set(false)
         }
     }
+
+    /**
+     * Run hooks that opted into [BaseHook.deferUntilPackageReady] and have not run yet for this
+     * loader. Used when the ready-phase callback would otherwise be dropped as a duplicate.
+     */
+    private fun dispatchDeferredHooks(loadParam: LoadParam, loaderKey: String, phase: String) {
+        dispatching.set(true)
+        try {
+            runDeferredHooks(loadParam, loaderKey, phase)
+        } finally {
+            dispatching.set(false)
+        }
+    }
+
+    /** Assumes the caller already set [dispatching]. */
+    private fun runDeferredHooks(loadParam: LoadParam, loaderKey: String, phase: String) {
+        for (hook in hooks) {
+            if (!hook.deferUntilPackageReady()) continue
+            val hookName = hook.javaClass.simpleName
+            if (!hook.hookOnLoadPackage()) continue
+            val hookKey = "$loaderKey#${System.identityHashCode(hook)}"
+            if (!dispatchedDeferredHooks.add(hookKey)) {
+                logDebug("skip duplicate deferred hook: hook=%s pkg=%s phase=%s",
+                    hookName, loadParam.packageName, phase)
+                continue
+            }
+            runCatching {
+                logInfo("dispatchLoad calling deferred onLoadPackage for hook=$hookName pkg=${loadParam.packageName} phase=$phase")
+                hook.onLoadPackage(loadParam)
+                logInfo("dispatchLoad completed deferred onLoadPackage for hook=$hookName pkg=${loadParam.packageName}")
+            }.onFailure { throwable ->
+                logError("%s failed for pkg=%s process=%s", hookName,
+                    loadParam.packageName, loadParam.processName, throwable)
+            }
+        }
+    }
+
+    private fun isReadyDispatchPhase(phase: String): Boolean = phase in READY_DISPATCH_PHASES
 
     /**
      * Called after all hooks have been dispatched for a package.
@@ -625,6 +685,17 @@ abstract class BaseLibXposedEntry : XposedModule {
          * without limit.
          */
         private const val MAX_DISPATCHES_PER_PACKAGE = 3
+
+        /**
+         * Phases where the target classLoader is fully constructed. Hooks that opt into
+         * [BaseHook.deferUntilPackageReady] run only here.
+         */
+        private val READY_DISPATCH_PHASES = setOf(
+            "packageReady",
+            "hotReload",
+            "moduleLoadedCurrentProcess",
+            "systemServerStarting",
+        )
         private const val STATE_PROCESS_NAME = "processName"
         private const val STATE_LOADED_PACKAGES = "loadedPackages"
         private const val SYSTEM_SERVER_PRIMARY_CLASS = "com.android.server.notification.NotificationManagerService"

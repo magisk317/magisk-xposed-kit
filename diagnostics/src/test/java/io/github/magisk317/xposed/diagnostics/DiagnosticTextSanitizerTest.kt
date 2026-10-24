@@ -16,8 +16,9 @@ class DiagnosticTextSanitizerTest {
         val log = File(tempDir, "runtime.jsonl").apply { writeText("token=secret") }
         val binary = File(tempDir, "image.png").apply { writeText("token=secret") }
 
-        DiagnosticTextSanitizer.sanitizeDirectory(tempDir, sanitizeText = { it.replace("secret", "***") })
+        val redacted = DiagnosticTextSanitizer.sanitizeDirectory(tempDir, sanitizeText = { it.replace("secret", "***") })
 
+        assertEquals(1, redacted)
         assertEquals("token=***\n", log.readText())
         assertEquals("token=secret", binary.readText())
         assertTrue(tempDir.listFiles().orEmpty().none { it.name.startsWith(".sanitize_") })

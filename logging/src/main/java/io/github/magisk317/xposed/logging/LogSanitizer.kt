@@ -13,17 +13,11 @@ object NoopLogSanitizer : LogSanitizer {
 /**
  * Process-wide switch controlling whether [DefaultLogSanitizer] deep-sanitizes.
  *
- * Neutral to any host application. Hosts wire their own sanitization preference
- * into [syncSanitizationEnabled] during init.
+ * Neutral to any host application. [MagiskLogPolicy.install] drives it from the build flags,
+ * so the value cannot come from a stored preference: a released app must sanitize even if the
+ * device still holds a verbose preference written by an older build.
  *
- * Default is `false`, leaving logs unsanitized until the user explicitly enables
- * sanitization.
- */
-/**
- * Process-wide switch controlling whether [DefaultLogSanitizer] deep-sanitizes.
- *
- * Default is `true` (sanitized). Hosts call [syncFromVerboseMode] with the
- * verbose flag: verbose ON -> sanitize OFF (raw data for debugging).
+ * Default is `true` (sanitized), so a process that never installs a policy leaks nothing.
  */
 object LogSanitizerConfig {
     @Volatile
@@ -33,9 +27,13 @@ object LogSanitizerConfig {
         sanitizationEnabled = enabled
     }
 
-    /** Pass verbose-mode enabled; sanitization is the inverse. */
-    fun syncFromVerboseMode(verboseEnabled: Boolean?) {
-        sanitizationEnabled = verboseEnabled != true
+    /**
+     * Apply a host's user-facing redaction switch without letting it undercut the build:
+     * a released app keeps redacting when the switch is off, while a debug build — the
+     * capture channel — may run plaintext because that is what its developer switched on.
+     */
+    fun applyUserSwitch(userWantsSanitized: Boolean) {
+        setEnabled(MagiskLogPolicy.current().sanitizesText || userWantsSanitized)
     }
 
     fun isEnabled(): Boolean = sanitizationEnabled
@@ -64,9 +62,9 @@ object DefaultLogSanitizer : LogSanitizer {
     }
 
     /**
-     * Sanitize when [LogSanitizerConfig] is enabled (default).
-     * When verbose logging is ON, sanitization is OFF — raw content is
-     * preserved for debugging, with only the length cap applied.
+     * Sanitize when [LogSanitizerConfig] is enabled (the default, and the only mode a
+     * distributed release runs with). A verbose CI or debug build skips redaction and only
+     * applies the length cap, because raw content is the point of that capture channel.
      */
     fun sanitizeIfEnabled(message: String): String {
         return if (LogSanitizerConfig.isEnabled()) {

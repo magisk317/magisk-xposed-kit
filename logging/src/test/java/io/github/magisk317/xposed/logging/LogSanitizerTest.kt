@@ -84,9 +84,9 @@ class LogSanitizerTest {
     }
 
     @Test
-    fun `verbose mode disables sanitization`() {
+    fun `a verbose build turns redaction off`() {
         try {
-            LogSanitizerConfig.syncFromVerboseMode(true)
+            MagiskLogPolicy.install(isDebugBuild = true)
 
             assertFalse(LogSanitizerConfig.isEnabled())
         } finally {
@@ -95,9 +95,9 @@ class LogSanitizerTest {
     }
 
     @Test
-    fun `non-verbose mode enables sanitization`() {
+    fun `a release build keeps redaction on`() {
         try {
-            LogSanitizerConfig.syncFromVerboseMode(false)
+            MagiskLogPolicy.install(isDebugBuild = false)
 
             assertTrue(LogSanitizerConfig.isEnabled())
         } finally {
@@ -106,13 +106,13 @@ class LogSanitizerTest {
     }
 
     @Test
-    fun `null verbose mode enables sanitization by default`() {
-        try {
-            LogSanitizerConfig.syncFromVerboseMode(null)
+    fun `the switch alone decides whether sanitizeIfEnabled redacts`() {
+        LogSanitizerConfig.setEnabled(false)
 
-            assertTrue(LogSanitizerConfig.isEnabled())
-        } finally {
-            LogSanitizerConfig.setEnabled(true)
-        }
+        val sanitized = DefaultLogSanitizer.sanitizeIfEnabled("from=13800138000")
+
+        assertEquals("from=13800138000", sanitized)
+        LogSanitizerConfig.setEnabled(true)
+        assertFalse(DefaultLogSanitizer.sanitizeIfEnabled("from=13800138000").contains("13800138000"))
     }
 }

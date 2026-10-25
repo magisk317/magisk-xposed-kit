@@ -44,11 +44,12 @@ class LogProviderQuotaPolicy(
         val usage = daily[uid]
         val current = if (usage == null || usage.day != day || nowMs < usage.day * MILLIS_PER_DAY) {
             if (usage == null && daily.size >= config.maxTrackedUids) {
-                daily.entries.iterator().let { iterator ->
-                    if (iterator.hasNext()) {
-                        iterator.next()
-                        iterator.remove()
-                    }
+                val iterator = daily.entries.iterator()
+                if (iterator.hasNext()) {
+                    // Insertion order is eviction order. The entry is bound because advancing the
+                    // iterator is the point here, not the value it hands back.
+                    val eldest = iterator.next()
+                    iterator.remove()
                 }
             }
             Usage(day).also { daily[uid] = it }

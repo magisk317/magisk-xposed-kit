@@ -89,7 +89,10 @@ class SharedPreferencesSource(
     }
 
     private fun report(operation: String, error: Throwable) {
-        runCatching { onError(operation, error) }
+        runCatching { onError(operation, error) }.onFailure {
+            // The host-supplied callback is being told about someone else's failure; letting it
+            // throw here would replace the real error with the reporter's.
+        }
     }
 }
 

@@ -42,7 +42,10 @@ object CrashLogRecorder {
         crashDirProvider = dirProvider
         previousHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, error ->
-            runCatching { record(thread, error, prune) }
+            runCatching { record(thread, error, prune) }.onFailure {
+                // A crash recorder that throws would swallow the very crash it is writing.
+                // The previous handler still receives the error on the next line.
+            }
             previousHandler?.uncaughtException(thread, error)
         }
     }

@@ -211,6 +211,9 @@ private class OutputDrain(process: Process) {
                     synchronized(collected) { collected.append(buffer, 0, read) }
                 }
             }
+        }.onFailure {
+            // The drain thread is the only thing that could report this, and whatever it
+            // managed to collect before dying is still handed back by await().
         }
     }.apply {
         isDaemon = true
@@ -218,7 +221,10 @@ private class OutputDrain(process: Process) {
     }
 
     fun await(joinMillis: Long = DRAIN_JOIN_MILLIS): String {
-        runCatching { thread.join(joinMillis) }
+        runCatching { thread.join(joinMillis) }.onFailure {
+            // A timed-out or interrupted join only means the drain is still running; the
+            // collected text is read under the same lock below either way.
+        }
         return synchronized(collected) { collected.toString().trim() }
     }
 

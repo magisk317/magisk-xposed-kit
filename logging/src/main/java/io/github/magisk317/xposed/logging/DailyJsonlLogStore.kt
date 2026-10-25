@@ -43,6 +43,9 @@ class DailyJsonlLogStore(
                 file.parentFile?.takeIf { !it.exists() }?.mkdirs()
                 file.appendText(fullLine)
                 onFileWritten(file)
+            }.onFailure {
+                // Fire-and-forget by contract (class KDoc): a disk write must never fail the
+                // caller that only wanted to record a line.
             }
         }
     }

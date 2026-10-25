@@ -153,6 +153,9 @@ object MagiskOtel {
                 .edit()
                 .putBoolean(key, enabled)
                 .apply()
+        }.onFailure {
+            // Best-effort by necessity: the switch mirrors into the hook process, and reporting
+            // this through XLog would route straight back into this exporter.
         }
     }
 
@@ -209,6 +212,9 @@ object MagiskOtel {
                     }
                 }
                 exportSpan(config, safeName, safeAttrs, statusOk)
+            }.onFailure {
+                // A dropped span must not kill the executor thread, and this exporter is the
+                // only sink that could hear about it -- reporting here would recurse.
             }
         }
     }
@@ -441,8 +447,10 @@ object MagiskOtel {
                 output.write(payload.toByteArray(Charsets.UTF_8))
                 output.flush()
             }
-            runCatching { connection.inputStream.use { it.readBytes() } }
-            runCatching { connection.errorStream?.use { it.readBytes() } }
+            // The OTLP response body carries nothing this exporter acts on; draining it keeps
+            // the connection tidy without letting a read failure replace the export outcome.
+            runCatching { connection.inputStream.use { it.readBytes() } }.onFailure { }
+            runCatching { connection.errorStream?.use { it.readBytes() } }.onFailure { }
         } finally {
             connection.disconnect()
         }

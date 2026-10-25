@@ -46,9 +46,10 @@ object HookHelpers {
         val resolved = resolveParameterTypes(target.classLoader, parameterTypes)
         var current: Class<*>? = target
         while (current != null) {
-            runCatching {
-                return current.getDeclaredMethod(methodName, *resolved).apply { isAccessible = true }
-            }
+            val found = runCatching {
+                current.getDeclaredMethod(methodName, *resolved).apply { isAccessible = true }
+            }.getOrNull()
+            if (found != null) return found
             current = current.superclass
         }
         throw NoSuchMethodException("Method not found: ${target.name}#$methodName")
@@ -144,9 +145,10 @@ object HookHelpers {
     fun findField(clazz: Class<*>, fieldName: String): Field {
         var current: Class<*>? = clazz
         while (current != null) {
-            runCatching {
-                return current.getDeclaredField(fieldName).apply { isAccessible = true }
-            }
+            val found = runCatching {
+                current.getDeclaredField(fieldName).apply { isAccessible = true }
+            }.getOrNull()
+            if (found != null) return found
             current = current.superclass
         }
         throw NoSuchFieldException("Field not found: ${clazz.name}#$fieldName")

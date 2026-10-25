@@ -72,11 +72,13 @@ object DiagnosticTextSanitizer {
                 }
             }
             futures.forEach { future ->
-                runCatching { future.get() }
+                // Every per-file failure already incremented `failures`, which the caller
+                // surfaces through onWarning; unwrapping it here again would double-report.
+                runCatching { future.get() }.onFailure { }
             }
         } finally {
             pool.shutdown()
-            runCatching { pool.awaitTermination(2, TimeUnit.MINUTES) }
+            runCatching { pool.awaitTermination(2, TimeUnit.MINUTES) }.onFailure { }
         }
         if (failures.get() > 0) {
             onWarning("sanitizeDirectory completed with failures=${failures.get()}")
@@ -148,13 +150,12 @@ object DiagnosticTextSanitizer {
     private fun replaceFile(temp: File, target: File) {
         try {
             Files.move(temp.toPath(), target.toPath(), ATOMIC_MOVE, REPLACE_EXISTING)
-        } catch (@Suppress("SwallowedException") atomicFailure: AtomicMoveNotSupportedException) {
-            runCatching {
-                Files.move(temp.toPath(), target.toPath(), REPLACE_EXISTING)
-            }.getOrElse { fallbackFailure ->
+        } catch (atomicFailure: AtomicMoveNotSupportedException) {
+            val fallback = runCatching { Files.move(temp.toPath(), target.toPath(), REPLACE_EXISTING) }
+            if (fallback.isFailure) {
                 val error = IOException(
                     "Unable to publish sanitized diagnostic file: ${target.name}",
-                    fallbackFailure,
+                    fallback.exceptionOrNull(),
                 )
                 error.addSuppressed(atomicFailure)
                 throw error

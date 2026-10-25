@@ -310,6 +310,8 @@ open class KeepAliveHook(
                     "target_package" to config.targetPackage,
                 ) + extra,
             )
+        }.onFailure {
+            // The sink is the reporting channel itself: a failing event must not recurse into the hook.
         }
     }
 

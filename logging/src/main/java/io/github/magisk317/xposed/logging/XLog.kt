@@ -150,6 +150,10 @@ object XLog {
         runCatching {
             logPrinterForTest?.invoke(priority, tag, message)
                 ?: Log.println(priority, tag, message)
+        }.onFailure {
+            // The printer is the last resort: there is no sink left that could receive a
+            // report about this print failing, and throwing back into the caller would turn
+            // a logging hiccup into a hook failure.
         }
     }
 

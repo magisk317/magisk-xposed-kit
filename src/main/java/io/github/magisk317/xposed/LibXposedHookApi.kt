@@ -196,7 +196,9 @@ class LibXposedHookApi(
 
     private fun logHotReloadDiagnostic(message: String) {
         module.log(Log.INFO, LOG_TAG, message)
-        runCatching { Log.i(LOG_TAG, message) }
+        runCatching { Log.i(LOG_TAG, message) }.onFailure {
+            // The module log above already carried the diagnostic; this is only the logcat echo.
+        }
     }
 
     private fun describeHandle(handle: XposedInterface.HookHandle): String {

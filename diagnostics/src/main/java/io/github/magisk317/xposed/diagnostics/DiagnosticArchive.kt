@@ -126,6 +126,9 @@ object DiagnosticArchive {
             if (!deletePath(stagingDir)) {
                 onWarning("Failed to cleanup staging dir: ${stagingDir.absolutePath}")
             }
+        }.onFailure {
+            // The cleanup already reported what it could; a throw here must not replace the
+            // bundle result that was built successfully.
         }
         return result
     }

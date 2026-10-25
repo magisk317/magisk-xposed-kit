@@ -77,7 +77,7 @@ object DiagnosticShell {
             return ShellResult(-1, "", e.message ?: e.javaClass.simpleName)
         }
         // Already closed or already gone: either way there is nothing left to prompt on.
-        runCatching { process.outputStream.close() }
+        runCatching { process.outputStream.close() }.onFailure { }
 
         val stdout = BoundedCapture(SU_OUTPUT_CAP)
         val stderr = BoundedCapture(SU_OUTPUT_CAP)

@@ -26,7 +26,6 @@ object ProcessNameResolver {
         return name
     }
 
-    @Suppress("deprecation")
     private fun resolve(): String {
         // Try platform API first (Android P+)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {

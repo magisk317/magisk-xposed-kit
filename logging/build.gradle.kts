@@ -44,7 +44,6 @@ kotlin {
         commonMain.dependencies {
             // Platform-neutral encoding/limiter/redaction primitives live in logging-core.
             api(project(":magisk-xposed-kit:logging-core"))
-            api(libs.kermit)
         }
 
         jvmTest.dependencies {

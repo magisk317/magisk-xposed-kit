@@ -47,6 +47,14 @@ object XLog {
     private var logPrinterForTest: ((Int, String, String) -> Unit)? = null
 
     /**
+     * Whether the platform print seam (logcat on Android, stdout/stderr on JVM)
+     * is active. A host that renders everything through its sink (the desktop
+     * JSONL capture) turns this off so lines are not written twice.
+     */
+    @Volatile
+    private var printEnabled: Boolean = true
+
+    /**
      * Configure the logger. Call once during module initialization.
      */
     @JvmStatic
@@ -58,6 +66,7 @@ object XLog {
         sink: LogSink? = null,
         sanitizer: LogSanitizer = DefaultLogSanitizer,
         defaultRoute: String? = null,
+        printEnabled: Boolean = true,
     ) {
         this.logTag = tag
         this.sLogLevel = logLevel
@@ -65,11 +74,52 @@ object XLog {
         this.sink = sink
         this.sensitiveMessageSanitizer = sanitizer
         this.defaultRoute = defaultRoute
+        this.printEnabled = printEnabled
     }
 
     @JvmStatic
     fun install(sink: LogSink?) {
         this.sink = sink
+    }
+
+    /** Sink-only mode helper: see [printEnabled]. */
+    @JvmStatic
+    fun setPrintEnabled(enabled: Boolean) {
+        printEnabled = enabled
+    }
+
+    /** A [TaggedLog] bound to [tag]: `XLog.tagged("Push").i { "…" }`. */
+    @JvmStatic
+    fun tagged(tag: String): TaggedLog = TaggedLog(tag)
+
+    /**
+     * Structured entry carrying field metadata: the message plus a flat
+     * string map travel on one [LogEvent] for sinks that render fields
+     * (JSONL captures, telemetry). Named arguments only — the vararg
+     * formatting overloads below do not compose with a metadata map.
+     */
+    @JvmStatic
+    @JvmOverloads
+    fun structured(
+        level: LogLevel,
+        message: String,
+        throwable: Throwable? = null,
+        tag: String? = null,
+        route: String? = null,
+        metadata: Map<String, String> = emptyMap(),
+        sensitive: Boolean = true,
+        force: Boolean = level >= LogLevel.WARN,
+    ) {
+        dispatch(
+            priority = level.priority,
+            tag = tag,
+            route = route,
+            force = force,
+            sensitive = sensitive,
+            message = message,
+            args = if (throwable == null) emptyArray() else arrayOf(throwable),
+            metadata = metadata,
+        )
     }
 
     // ── Core log dispatch ─────────────────────────────────────────────────
@@ -99,6 +149,38 @@ object XLog {
         sensitive: Boolean,
         message: String,
         vararg args: Any?,
+    ) {
+        dispatch(priority, tag, route, force, sensitive, message, args, emptyMap())
+    }
+
+    /**
+     * Metadata-carrying variant of [log]: [metadata] rides the emitted
+     * [LogEvent] for sinks that render fields. The map sits before [message]
+     * so positional calls can never be confused with the String-first overload.
+     */
+    @JvmStatic
+    fun log(
+        priority: Int,
+        tag: String?,
+        route: String?,
+        force: Boolean,
+        sensitive: Boolean,
+        metadata: Map<String, String>,
+        message: String,
+        vararg args: Any?,
+    ) {
+        dispatch(priority, tag, route, force, sensitive, message, args, metadata)
+    }
+
+    private fun dispatch(
+        priority: Int,
+        tag: String?,
+        route: String?,
+        force: Boolean,
+        sensitive: Boolean,
+        message: String,
+        args: Array<out Any?>,
+        metadata: Map<String, String>,
     ) {
         if (priority < sLogLevel) return
 
@@ -131,6 +213,7 @@ object XLog {
                 force = force,
                 sensitive = sensitive,
                 throwableText = outputThrowable,
+                metadata = metadata,
             ),
         )
     }
@@ -147,7 +230,11 @@ object XLog {
     private fun printLog(priority: Int, tag: String, message: String) {
         runCatching {
             logPrinterForTest?.invoke(priority, tag, message)
-                ?: printPlatformLine(priority, tag, message)
+                ?: if (printEnabled) {
+                    printPlatformLine(priority, tag, message)
+                } else {
+                    // Sink-only mode: the host renders everything itself.
+                }
         }.onFailure {
             // The printer is the last resort: there is no sink left that could receive a
             // report about this print failing, and throwing back into the caller would turn
@@ -279,6 +366,7 @@ object XLog {
         sLogLevel = LogLevel.INFO.priority
         logToXposed = false
         defaultRoute = null
+        printEnabled = true
         routeContext.remove()
     }
 }

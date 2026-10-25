@@ -42,8 +42,6 @@ kotlin {
         getByName("jvmMain").kotlin.srcDir("src/jvmSharedMain/kotlin")
         getByName("androidMain").kotlin.srcDir("src/jvmSharedMain/kotlin")
         commonMain.dependencies {
-            // Platform-neutral encoding/limiter/redaction primitives live in logging-core.
-            api(project(":magisk-xposed-kit:logging-core"))
         }
 
         jvmTest.dependencies {

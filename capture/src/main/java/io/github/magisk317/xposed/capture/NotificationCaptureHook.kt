@@ -29,7 +29,7 @@ abstract class NotificationCaptureHook(
     protected abstract fun onNotificationCaptured(
         capture: CapturedNotification,
         systemContext: Context,
-        emit: CaptureEmit,
+        emit: NotificationCaptureEmit,
     )
 
     /** Product hook for diagnostics on blank notifications; the capture is dropped either way. */

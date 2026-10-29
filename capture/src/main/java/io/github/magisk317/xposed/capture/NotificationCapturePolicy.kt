@@ -1,5 +1,7 @@
 package io.github.magisk317.xposed.capture
 
+import android.app.Notification
+
 import java.util.Locale
 
 /**

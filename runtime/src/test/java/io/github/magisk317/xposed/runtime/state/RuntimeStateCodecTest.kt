@@ -7,8 +7,8 @@ class RuntimeStateCodecTest {
     @Test
     fun `hook process round trips encoded identity and source`() {
         val original = HookProcessStatus("com.android.server.telecom", "system_server", 42L, "process_online", 55)
-        val key = "hook_process.${RuntimeStateCodec.encode(original.packageName)}.${RuntimeStateCodec.encode(original.processName)}"
-        assertEquals(original, RuntimeStateCodec.decodeProcess(key, RuntimeStateCodec.encodeProcess(original)))
+        val key = RuntimeStateCodec.hookProcessKey(original.packageName, original.processName)
+        assertEquals(original, RuntimeStateCodec.decodeHookProcess(key, RuntimeStateCodec.encodeHookProcess(original)))
     }
 
     @Test

@@ -85,7 +85,13 @@ object RuntimeStateStore {
     private fun readLocked(file: File): RuntimeStateSnapshot {
         if (!file.isFile) return RuntimeStateSnapshot()
         val values = mutableMapOf<String, String>()
-        runCatching { file.forEachLine { line -> line.indexOf('=').takeIf { it > 0 }?.let { values[line.substring(0, it)] = line.substring(it + 1) } } }
+        try {
+            file.forEachLine { line ->
+                line.indexOf('=').takeIf { it > 0 }?.let { values[line.substring(0, it)] = line.substring(it + 1) }
+            }
+        } catch (_: Exception) {
+            return RuntimeStateSnapshot()
+        }
         return RuntimeStateSnapshot(
             lastServiceBindAtMs = values[KEY_SERVICE_BIND]?.let(RuntimeStateCodec::decodeService)?.first ?: 0L,
             lastServiceFrameworkName = values[KEY_SERVICE_BIND]?.let(RuntimeStateCodec::decodeService)?.second.orEmpty(),
@@ -98,7 +104,7 @@ object RuntimeStateStore {
     }
 
     private fun write(file: File, state: RuntimeStateSnapshot) {
-        runCatching {
+        try {
             file.parentFile?.mkdirs()
             file.writeText(buildString {
                 appendLine("$KEY_SERVICE_BIND=${RuntimeStateCodec.encodeService(state.lastServiceBindAtMs, state.lastServiceFrameworkName, state.lastServiceFrameworkVersion)}")
@@ -107,6 +113,8 @@ object RuntimeStateStore {
                 appendLine("$KEY_CALL_SOURCE=${RuntimeStateCodec.encodeCallSource(state.lastCallNotificationSource)}")
                 appendLine("$KEY_NOTIFY_EVENT=${RuntimeStateCodec.encodeNotifyEvent(state.lastNotifyEvent)}")
             })
+        } catch (_: Exception) {
+            // Runtime state must never break the injected hook path.
         }
     }
 }

@@ -20,7 +20,7 @@ interface NotificationCapturePolicy {
     fun isGroupSummaryBypassed(packageName: String): Boolean = false
 }
 
-class DefaultNotificationCapturePolicy : NotificationCapturePolicy {
+open class DefaultNotificationCapturePolicy : NotificationCapturePolicy {
 
     override fun skipReason(capture: CapturedNotification, isPriorityRoute: Boolean): String? {
         val flags = capture.flags

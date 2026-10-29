@@ -1,7 +1,7 @@
 package io.github.magisk317.xposed.runtime.state
 
 import android.content.Context
-import android.util.Base64
+import java.util.Base64
 import java.io.File
 
 /**
@@ -113,9 +113,9 @@ object RuntimeStateStore {
 
 internal object RuntimeStateCodec {
     private const val SEPARATOR = "|"
-    private fun encodeToken(value: String): String = Base64.encodeToString(value.toByteArray(Charsets.UTF_8), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+    private fun encodeToken(value: String): String = Base64.getUrlEncoder().withoutPadding().encodeToString(value.toByteArray(Charsets.UTF_8))
     fun encode(value: String): String = encodeToken(value)
-    private fun decode(value: String): String? = runCatching { String(Base64.decode(value, Base64.URL_SAFE or Base64.NO_WRAP), Charsets.UTF_8) }.getOrNull()
+    private fun decode(value: String): String? = runCatching { String(Base64.getUrlDecoder().decode(value), Charsets.UTF_8) }.getOrNull()
     fun encodeService(at: Long, name: String, version: String) = listOf(at.toString(), encodeToken(name), encodeToken(version)).joinToString(SEPARATOR)
     fun decodeService(raw: String): Triple<Long, String, String> { val p = raw.split(SEPARATOR); return Triple(p.getOrNull(0)?.toLongOrNull() ?: 0L, p.getOrNull(1)?.let(::decode).orEmpty(), p.getOrNull(2)?.let(::decode).orEmpty()) }
     fun encodeProcess(v: HookProcessStatus) = listOf(v.lastSeenAtMs, v.moduleVersion, encodeToken(v.source)).joinToString(SEPARATOR)

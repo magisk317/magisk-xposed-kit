@@ -531,7 +531,7 @@ internal object RuntimeStateCodec {
 
     private fun sanitize(value: String): String = value.replace(SEPARATOR, "/").take(MAX_SOURCE_LENGTH)
 
-    private fun encode(raw: String): String =
+    fun encode(raw: String): String =
         Base64.getUrlEncoder().withoutPadding().encodeToString(raw.toByteArray(Charsets.UTF_8))
 
     private fun decode(token: String): String? = runCatching {

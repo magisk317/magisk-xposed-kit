@@ -113,7 +113,7 @@ abstract class NotificationCaptureHook(
 
     private fun handleEnqueueNotificationInternal(param: MethodHookParam) {
         val startedAt = System.nanoTime()
-        val emit = CaptureEmit(startedAt)
+        val emit = NotificationCaptureEmit(startedAt)
 
         var pkg: String? = null
         var notification: Notification? = null

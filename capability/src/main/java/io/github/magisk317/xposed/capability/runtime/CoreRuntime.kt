@@ -46,7 +46,8 @@ object CoreRuntime {
         )
     }
 
-    internal fun resetForTest() {
+    // Test seam: consumers reset the capability runtime between unit tests.
+    fun resetForTest() {
         accessRef = null
         io.github.magisk317.xposed.logging.XLog.resetForTest()
     }

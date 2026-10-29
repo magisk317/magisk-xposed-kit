@@ -26,7 +26,8 @@ object CorePrefs {
         )
     }
 
-    internal fun resetForTest() {
+    // Test seam: consumers reset the hook-side prefs between unit tests.
+    fun resetForTest() {
         accessRef = null
     }
 

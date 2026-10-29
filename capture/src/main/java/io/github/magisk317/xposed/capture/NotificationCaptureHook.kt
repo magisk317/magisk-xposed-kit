@@ -5,7 +5,7 @@ import android.content.Context
 import io.github.magisk317.xposed.BaseHook
 import io.github.magisk317.xposed.HookEnv
 import io.github.magisk317.xposed.HookHelpers
-import io.github.magisk317.xposed.HookHostCapabilities
+import io.github.magisk317.xposed.runtime.HookHostCapabilities
 import io.github.magisk317.xposed.LoadParam
 import io.github.magisk317.xposed.MethodHook
 import io.github.magisk317.xposed.MethodHookParam

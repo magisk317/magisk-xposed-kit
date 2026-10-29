@@ -13,7 +13,7 @@ dependencies {
         ""
     }
     implementation(project("$kitPathPrefix"))
-    implementation(project("$kitPathPrefix:runtime"))
+    api(project("$kitPathPrefix:runtime"))
     testImplementation(libs.junit.jupiter)
     testRuntimeOnly(libs.junit.platform.launcher)
 }

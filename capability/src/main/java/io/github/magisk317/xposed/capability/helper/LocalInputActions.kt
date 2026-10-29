@@ -5,7 +5,7 @@ import android.os.Handler
 import android.os.Looper
 import android.widget.Toast
 import io.github.magisk317.xposed.capability.helper.AutoInputBroadcastHelper
-import io.github.magisk317.xposed.capability.hook.system.SystemInputInjectorHook
+import io.github.magisk317.xposed.capability.system.SystemInputInjectorHook
 import io.github.magisk317.xposed.logging.XLog
 
 /**

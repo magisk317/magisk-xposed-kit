@@ -1,4 +1,4 @@
-package io.github.magisk317.xposed.capability.hook.permission
+package io.github.magisk317.xposed.capability.permission
 
 import androidx.annotation.RequiresApi
 import io.github.magisk317.xposed.runtime.contract.logging.LogRoute

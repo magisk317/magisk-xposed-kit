@@ -1,4 +1,4 @@
-package io.github.magisk317.xposed.capability.hook.permission
+package io.github.magisk317.xposed.capability.permission
 
 import android.Manifest
 import android.os.UserHandle

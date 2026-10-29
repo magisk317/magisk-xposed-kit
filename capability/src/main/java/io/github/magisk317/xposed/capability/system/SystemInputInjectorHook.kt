@@ -1,4 +1,4 @@
-package io.github.magisk317.xposed.capability.hook.system
+package io.github.magisk317.xposed.capability.system
 
 import io.github.magisk317.xposed.runtime.contract.autoinput.AutoInputFallbackPolicy
 

@@ -1,4 +1,4 @@
-package io.github.magisk317.xposed.capability.hook.me
+package io.github.magisk317.xposed.capability.me
 
 import io.github.magisk317.xposed.capability.utils.ModuleUtils
 import io.github.magisk317.xposed.logging.XLog

@@ -19,10 +19,10 @@ include:
   # deleted its v1 tag on 2026-10-21 for that reason. Re-pointing this SHA is the
   # deliberate, reviewable way to take a toolkit change.
   - project: magisk3171/shared/magisk-ci-toolkit
-    ref: 5a9cef57abe852dc7798664e03ad50256a0204dd
+    ref: 9e599d6983bd5de2ffcd4e21b5319dc84f19a9a55
     file: /.gitlab/ci/utility.yml
   - project: magisk3171/shared/magisk-ci-toolkit
-    ref: 5a9cef57abe852dc7798664e03ad50256a0204dd
+    ref: 9e599d6983bd5de2ffcd4e21b5319dc84f19a9a55
     file: /.gitlab/ci/github-sync.yml
 
 stages:

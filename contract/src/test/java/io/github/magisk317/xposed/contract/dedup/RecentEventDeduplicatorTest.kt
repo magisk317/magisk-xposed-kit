@@ -9,8 +9,8 @@ class RecentEventDeduplicatorTest {
 
     @Test
     fun `build prefers explicit event id`() {
-        val key = SmsForwardDedupKeyFactory.build(
-            SmsForwardDedupSpec(
+        val key = CapturedEventDedupKeyFactory.build(
+            CapturedEventDedupSpec(
                 eventId = " evt-123 ",
                 sender = "10086",
                 body = "ignored",

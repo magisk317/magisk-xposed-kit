@@ -1,6 +1,6 @@
 package io.github.magisk317.xposed.contract.dedup
 
-data class SmsForwardDedupSpec(
+data class CapturedEventDedupSpec(
     val eventId: String = "",
     val sender: String? = null,
     val body: String? = null,
@@ -11,8 +11,8 @@ data class SmsForwardDedupSpec(
     val subId: Int? = null,
 )
 
-object SmsForwardDedupKeyFactory {
-    fun build(spec: SmsForwardDedupSpec): String {
+object CapturedEventDedupKeyFactory {
+    fun build(spec: CapturedEventDedupSpec): String {
         val normalizedEventId = spec.eventId.trim()
         if (normalizedEventId.isNotEmpty()) {
             return "event:$normalizedEventId"

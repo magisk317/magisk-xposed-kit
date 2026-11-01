@@ -18,12 +18,15 @@ object RuntimeStateStore {
     private const val KEY_LAST_SERVICE_BIND_AT_MS = "last_service_bind_at_ms"
     private const val KEY_LAST_SERVICE_FRAMEWORK_NAME = "last_service_framework_name"
     private const val KEY_LAST_SERVICE_FRAMEWORK_VERSION = "last_service_framework_version"
+    private const val KEY_LAST_SERVICE_DEATH_AT_MS = "last_service_death_at_ms"
     private const val KEY_LAST_HOOK_AT_MS = "last_hook_at_ms"
     private const val KEY_LAST_HOOK_PACKAGE = "last_hook_package"
     private const val KEY_LAST_HOOK_PROCESS = "last_hook_process"
     private const val KEY_LAST_HOOK_SOURCE = "last_hook_source"
     private const val KEY_LAST_CALL_NOTIFY_SOURCE = "call_notify_source"
     private const val KEY_NOTIFY_EVENT = "notify_event"
+    private const val KEY_LAST_FRAMEWORK_HOOK_AT_MS = "last_framework_hook_at_ms"
+    private const val KEY_FRAMEWORK_HOOK_TARGETS = "framework_hook_targets"
 
     private val lock = Any()
     private val statusState = MutableStateFlow(RuntimeStatusState())
@@ -51,6 +54,28 @@ object RuntimeStateStore {
         return synchronized(lock) {
             publishStatusLocked(context)
             statusState.value.isEnabled
+        }
+    }
+
+    /**
+     * Installs the host supplied activation inputs.
+     *
+     * The host owns the live "the framework is bound right now" flag and may override the
+     * activation rule; without this hand-over the store could only fall back to what the hook
+     * wrote into the app, which is exactly the signal a locked or unstartable provider loses.
+     */
+    fun installActivationSource(
+        runtimeConnectedProvider: () -> Boolean = { false },
+        activationStatusResolver: ((Context, RuntimeDiagnosticsSnapshot, RuntimeStatusInputs) -> Boolean)? = null,
+    ) {
+        this.runtimeConnectedProvider = runtimeConnectedProvider
+        this.activationStatusResolver = activationStatusResolver
+    }
+
+    /** Recomputes the published status, e.g. right after the activation inputs changed. */
+    fun refreshStatus(context: Context) {
+        synchronized(lock) {
+            publishStatusLocked(context)
         }
     }
 
@@ -96,7 +121,7 @@ object RuntimeStateStore {
             source = "service_bind",
             route = "",
             snapshot = snapshot,
-            runtimeConnected = true,
+            runtimeConnected = isRuntimeConnected(),
         )
     }
 
@@ -105,7 +130,13 @@ object RuntimeStateStore {
         verboseLogging: Boolean,
     ) {
         synchronized(lock) {
-            publishStatusLocked(context)
+            val current = readSnapshotLocked(context)
+            current.copy(
+                lastServiceDeathAtMs = System.currentTimeMillis(),
+            ).also {
+                writeSnapshotLocked(context, it)
+                publishStatusLocked(context, it)
+            }
         }
         MagiskOtel.event(
             name = "hook.service",
@@ -167,6 +198,42 @@ object RuntimeStateStore {
             verboseLogging = verboseLogging,
             source = source,
             route = route,
+            snapshot = snapshot,
+            runtimeConnected = null,
+        )
+    }
+
+    /**
+     * Records the processes the framework reports as running the module code.
+     *
+     * This is the framework side proof of life: it does not need the hook to reach the app, so
+     * the activation status survives a content provider the system refuses to start.
+     */
+    fun recordFrameworkHookTargets(
+        context: Context,
+        targets: List<FrameworkHookTargetStatus>,
+        source: String = "framework_targets",
+        verboseLogging: Boolean = false,
+    ) {
+        val snapshot = synchronized(lock) {
+            val current = readSnapshotLocked(context)
+            val now = System.currentTimeMillis()
+            current.copy(
+                lastFrameworkHookAtMs = now,
+                frameworkHookTargets = targets
+                    .map { it.copy(lastSeenAtMs = now) }
+                    .sortedByDescending { it.lastSeenAtMs }
+                    .take(RuntimeStateCodec.MAX_FRAMEWORK_HOOK_TARGETS),
+            ).also {
+                writeSnapshotLocked(context, it)
+                publishStatusLocked(context, it)
+            }
+        }
+        logSnapshotIfVerbose(
+            context = context,
+            verboseLogging = verboseLogging,
+            source = source,
+            route = "",
             snapshot = snapshot,
             runtimeConnected = null,
         )
@@ -280,13 +347,14 @@ object RuntimeStateStore {
         snapshot: RuntimeDiagnosticsSnapshot,
     ): RuntimeStatusState {
         val runtimeConnected = isRuntimeConnected()
-        val inputs = RuntimeStatusInputs(
+        val inputs = RuntimeActivationRule.evaluate(
+            snapshot = snapshot,
+            bootStartAtMs = currentBootStartAtMs(),
             runtimeConnected = runtimeConnected,
-            hasHookHeartbeat = snapshot.lastHookAtMs >= currentBootStartAtMs(),
         )
         val resolver = activationStatusResolver
         val isEnabled = resolver?.invoke(context, snapshot, inputs)
-            ?: (inputs.runtimeConnected || inputs.hasHookHeartbeat)
+            ?: RuntimeActivationRule.isActivated(inputs)
         return RuntimeStatusState(
             isEnabled = isEnabled,
             runtimeConnected = runtimeConnected,
@@ -331,10 +399,14 @@ object RuntimeStateStore {
         val notifyEvent = values[KEY_NOTIFY_EVENT]
             ?.let(RuntimeStateCodec::decodeNotifyEvent)
             ?: NotifyEventSnapshot()
+        val frameworkHookTargets = values[KEY_FRAMEWORK_HOOK_TARGETS]
+            ?.let(RuntimeStateCodec::decodeFrameworkHookTargets)
+            ?: emptyList()
         return RuntimeDiagnosticsSnapshot(
             lastServiceBindAtMs = values[KEY_LAST_SERVICE_BIND_AT_MS]?.toLongOrNull() ?: 0L,
             lastServiceFrameworkName = values[KEY_LAST_SERVICE_FRAMEWORK_NAME].orEmpty(),
             lastServiceFrameworkVersion = values[KEY_LAST_SERVICE_FRAMEWORK_VERSION].orEmpty(),
+            lastServiceDeathAtMs = values[KEY_LAST_SERVICE_DEATH_AT_MS]?.toLongOrNull() ?: 0L,
             lastHookAtMs = values[KEY_LAST_HOOK_AT_MS]?.toLongOrNull() ?: 0L,
             lastHookPackage = values[KEY_LAST_HOOK_PACKAGE].orEmpty(),
             lastHookProcess = values[KEY_LAST_HOOK_PROCESS].orEmpty(),
@@ -343,6 +415,8 @@ object RuntimeStateStore {
             lastCallNotifySource = callSource,
             hookInstalls = hookInstalls,
             lastNotifyEvent = notifyEvent,
+            lastFrameworkHookAtMs = values[KEY_LAST_FRAMEWORK_HOOK_AT_MS]?.toLongOrNull() ?: 0L,
+            frameworkHookTargets = frameworkHookTargets,
         )
     }
 
@@ -355,6 +429,7 @@ object RuntimeStateStore {
                     appendLine("$KEY_LAST_SERVICE_BIND_AT_MS=${snapshot.lastServiceBindAtMs}")
                     appendLine("$KEY_LAST_SERVICE_FRAMEWORK_NAME=${snapshot.lastServiceFrameworkName}")
                     appendLine("$KEY_LAST_SERVICE_FRAMEWORK_VERSION=${snapshot.lastServiceFrameworkVersion}")
+                    appendLine("$KEY_LAST_SERVICE_DEATH_AT_MS=${snapshot.lastServiceDeathAtMs}")
                     appendLine("$KEY_LAST_HOOK_AT_MS=${snapshot.lastHookAtMs}")
                     appendLine("$KEY_LAST_HOOK_PACKAGE=${snapshot.lastHookPackage}")
                     appendLine("$KEY_LAST_HOOK_PROCESS=${snapshot.lastHookProcess}")
@@ -382,6 +457,11 @@ object RuntimeStateStore {
                                 "=" + RuntimeStateCodec.encodeHookInstall(status),
                         )
                     }
+                    appendLine("$KEY_LAST_FRAMEWORK_HOOK_AT_MS=${snapshot.lastFrameworkHookAtMs}")
+                    appendLine(
+                        "$KEY_FRAMEWORK_HOOK_TARGETS=" +
+                            RuntimeStateCodec.encodeFrameworkHookTargets(snapshot.frameworkHookTargets),
+                    )
                 },
             )
         } catch (_: IOException) {
@@ -422,7 +502,9 @@ internal object RuntimeStateCodec {
     const val HOOK_INSTALL_KEY_PREFIX = "hook_install."
     const val MAX_HOOK_PROCESSES = 16
     const val MAX_HOOK_INSTALLS = 16
+    const val MAX_FRAMEWORK_HOOK_TARGETS = 16
     private const val SEPARATOR = "|"
+    private const val TARGET_SEPARATOR = ";"
     private const val MAX_SOURCE_LENGTH = 120
 
     fun hookProcessKey(packageName: String, processName: String): String =
@@ -527,6 +609,34 @@ internal object RuntimeStateCodec {
             skipReason = decode(parts[5]).orEmpty(),
             lastSeenAtMs = parts[0].toLongOrNull() ?: 0L,
         )
+    }
+
+    fun encodeFrameworkHookTargets(targets: List<FrameworkHookTargetStatus>): String =
+        targets.joinToString(TARGET_SEPARATOR) { target ->
+            listOf(
+                encode(target.packageName),
+                encode(target.processName),
+                target.pid.toString(),
+                target.uid.toString(),
+                encode(target.state),
+                target.lastSeenAtMs.toString(),
+            ).joinToString(SEPARATOR)
+        }
+
+    fun decodeFrameworkHookTargets(raw: String): List<FrameworkHookTargetStatus> {
+        if (raw.isBlank()) return emptyList()
+        return raw.split(TARGET_SEPARATOR).mapNotNull { entry ->
+            val parts = entry.split(SEPARATOR)
+            if (parts.size < 6) return@mapNotNull null
+            FrameworkHookTargetStatus(
+                packageName = decode(parts[0]).orEmpty(),
+                processName = decode(parts[1]).orEmpty(),
+                pid = parts[2].toIntOrNull() ?: 0,
+                uid = parts[3].toIntOrNull() ?: 0,
+                state = decode(parts[4]).orEmpty(),
+                lastSeenAtMs = parts[5].toLongOrNull() ?: 0L,
+            )
+        }
     }
 
     private fun sanitize(value: String): String = value.replace(SEPARATOR, "/").take(MAX_SOURCE_LENGTH)

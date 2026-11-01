@@ -1,6 +1,7 @@
 package io.github.magisk317.xposed.capability.utils
 
 import io.github.magisk317.xposed.logging.XLog
+import io.github.magisk317.xposed.runtime.state.RuntimeStateStore
 
 /**
  * 当前Xposed模块相关工具类
@@ -58,9 +59,17 @@ object ModuleUtils {
 
     /**
      * 模块是否已激活（兼容新 API 静态作用域场景）
+     *
+     * The kit's runtime state store owns the authoritative decision, so it is part of the answer
+     * here too: the store also knows about a framework bind and about the hooked targets the
+     * framework reports, and neither is visible from this class. The older signals stay, so no
+     * consumer can lose one by this widening.
      */
     @JvmStatic
     fun isModuleActivated(context: android.content.Context): Boolean {
-        return isModuleEnabled() || runtimeActivated || ModuleActivationStore.isActivatedRecently(context)
+        return isModuleEnabled() ||
+            runtimeActivated ||
+            ModuleActivationStore.isActivatedRecently(context) ||
+            RuntimeStateStore.isModuleActivated(context)
     }
 }

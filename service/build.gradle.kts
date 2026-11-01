@@ -13,6 +13,10 @@ dependencies {
     // not be handed an exported ContentProvider it did not ask for.
     api(libs.libxposed.service)
     api(libs.kotlinx.coroutines.core)
+    // The framework hook targets are recorded into the kit's runtime state store, so the service
+    // module needs the runtime layer. The runtime module never depends on the service module, so
+    // this stays a one-way edge.
+    api(project(":magisk-xposed-kit:runtime"))
     testImplementation(libs.junit.jupiter)
     testRuntimeOnly(libs.junit.platform.launcher)
 }

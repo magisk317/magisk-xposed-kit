@@ -32,10 +32,7 @@ object RuntimeStateStore {
     private val statusState = MutableStateFlow(RuntimeStatusState())
 
     @Volatile
-    var runtimeConnectedProvider: () -> Boolean = { false }
-
-    @Volatile
-    var activationStatusResolver: ((Context, RuntimeDiagnosticsSnapshot, RuntimeStatusInputs) -> Boolean)? = null
+    private var runtimeConnected = false
 
     fun snapshot(context: Context): RuntimeDiagnosticsSnapshot = synchronized(lock) {
         val snapshot = readSnapshotLocked(context)
@@ -48,7 +45,7 @@ object RuntimeStateStore {
         return snapshot.lastHookAtMs >= currentBootStartAtMs()
     }
 
-    fun isRuntimeConnected(): Boolean = runtimeConnectedProvider.invoke()
+    fun isRuntimeConnected(): Boolean = runtimeConnected
 
     fun isModuleActivated(context: Context): Boolean {
         return synchronized(lock) {
@@ -58,18 +55,14 @@ object RuntimeStateStore {
     }
 
     /**
-     * Installs the host supplied activation inputs.
+     * Tells the store that the framework binder is live or gone.
      *
-     * The host owns the live "the framework is bound right now" flag and may override the
-     * activation rule; without this hand-over the store could only fall back to what the hook
-     * wrote into the app, which is exactly the signal a locked or unstartable provider loses.
+     * The store owns the activation decision, so it owns the live connection flag as well: a host
+     * that kept its own copy of that flag would be a second source of truth, and the two would
+     * drift as soon as one of them missed an update.
      */
-    fun installActivationSource(
-        runtimeConnectedProvider: () -> Boolean = { false },
-        activationStatusResolver: ((Context, RuntimeDiagnosticsSnapshot, RuntimeStatusInputs) -> Boolean)? = null,
-    ) {
-        this.runtimeConnectedProvider = runtimeConnectedProvider
-        this.activationStatusResolver = activationStatusResolver
+    fun setRuntimeConnected(connected: Boolean) {
+        runtimeConnected = connected
     }
 
     /** Recomputes the published status, e.g. right after the activation inputs changed. */
@@ -343,7 +336,6 @@ object RuntimeStateStore {
     }
 
     private fun computeStatusLocked(
-        context: Context,
         snapshot: RuntimeDiagnosticsSnapshot,
     ): RuntimeStatusState {
         val runtimeConnected = isRuntimeConnected()
@@ -352,9 +344,7 @@ object RuntimeStateStore {
             bootStartAtMs = currentBootStartAtMs(),
             runtimeConnected = runtimeConnected,
         )
-        val resolver = activationStatusResolver
-        val isEnabled = resolver?.invoke(context, snapshot, inputs)
-            ?: RuntimeActivationRule.isActivated(inputs)
+        val isEnabled = RuntimeActivationRule.isActivated(inputs)
         return RuntimeStatusState(
             isEnabled = isEnabled,
             runtimeConnected = runtimeConnected,
@@ -366,7 +356,7 @@ object RuntimeStateStore {
         context: Context,
         snapshot: RuntimeDiagnosticsSnapshot = readSnapshotLocked(context),
     ) {
-        val next = computeStatusLocked(context, snapshot)
+        val next = computeStatusLocked(snapshot)
         if (statusState.value != next) {
             statusState.value = next
         }

@@ -127,6 +127,12 @@ abstract class BaseLibXposedEntry : XposedModule {
         }
 
         val hookApi = LibXposedHookApi(this, hookIdPrefix)
+        // Installed here rather than left to installModuleRuntime: the kit's own hooks reach
+        // XposedRuntime through the hook() DSL, and a consumer that only wires HookEnv would run
+        // them against an uninstalled runtime (IllegalStateException: libxposed runtime is not
+        // installed). Consumers that install it themselves pass the same two objects, so this is
+        // idempotent.
+        XposedRuntime.install(this, hookApi)
         installModuleRuntime(this, hookApi)
         HookEnv.init(hookApi)
         processName = if (param.isSystemServer) "android" else param.processName
@@ -219,6 +225,7 @@ abstract class BaseLibXposedEntry : XposedModule {
             // The runtime installer may itself create hooks (for example module-specific
             // fallback hooks). Index the old handles before invoking it so those hooks can be
             // replaced instead of being added as a second generation.
+            XposedRuntime.install(this, hookApi)
             installModuleRuntime(this, hookApi)
             HookEnv.init(hookApi)
             installInitZygoteHooks()

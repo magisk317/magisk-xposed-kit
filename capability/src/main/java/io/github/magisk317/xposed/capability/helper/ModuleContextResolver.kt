@@ -13,10 +13,7 @@ object ModuleContextResolver {
 
     fun resolve(applicationId: String, fallback: Context? = null): Context? {
         cached?.let { return it }
-        val base = fallback?.let { it.applicationContext ?: it }
-            ?: resolveCurrentApplication()
-            ?: resolveSystemContext()
-            ?: return null
+        val base = ProcessContextResolver.resolve(fallback) ?: return null
         val resolved = if (base.packageName == applicationId) {
             base
         } else {
@@ -26,21 +23,4 @@ object ModuleContextResolver {
         }
         return resolved?.also { cached = it }
     }
-
-    private fun resolveCurrentApplication(): Context? = runCatching {
-        val activityThreadClass = Class.forName("android.app.ActivityThread")
-        val currentApplication = activityThreadClass.getDeclaredMethod("currentApplication")
-        currentApplication.isAccessible = true
-        currentApplication.invoke(null) as? Context
-    }.getOrNull()
-
-    private fun resolveSystemContext(): Context? = runCatching {
-        val activityThreadClass = Class.forName("android.app.ActivityThread")
-        val currentActivityThread = activityThreadClass.getDeclaredMethod("currentActivityThread")
-        currentActivityThread.isAccessible = true
-        val thread = currentActivityThread.invoke(null) ?: return null
-        val getSystemContext = activityThreadClass.getDeclaredMethod("getSystemContext")
-        getSystemContext.isAccessible = true
-        getSystemContext.invoke(thread) as? Context
-    }.getOrNull()
 }

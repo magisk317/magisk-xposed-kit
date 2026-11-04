@@ -157,7 +157,11 @@ fun Context.hasUsageStatsAccessViaAppOps(
         AppOpsManager.MODE_FOREGROUND,
         AppOpsManager.MODE_DEFAULT,
     )
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+    if (Build.VERSION.SDK_INT >= 36) {
+        return appOps.checkOpRawNoThrow(op, uid, pkg, null) in allowedModes
+    }
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        @Suppress("DEPRECATION")
         val rawMode = appOps.unsafeCheckOpRawNoThrow(op, uid, pkg)
         return rawMode in allowedModes
     }

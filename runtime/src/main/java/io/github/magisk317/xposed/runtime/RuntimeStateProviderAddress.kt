@@ -2,6 +2,7 @@ package io.github.magisk317.xposed.runtime
 
 import android.content.Context
 import android.net.Uri
+import android.os.Binder
 import android.os.Bundle
 import io.github.magisk317.xposed.logging.XLog
 
@@ -49,9 +50,16 @@ object RuntimeStateProviderAddress {
                 error.message ?: error.javaClass.simpleName,
             )
         },
-    ): Bundle? = runCatching {
-        context.contentResolver.call(uriOf(applicationId), method, arg, extras)
-    }.onFailure { error ->
-        onFailure(method, error)
-    }.getOrNull()
+    ): Bundle? {
+        val identity = Binder.clearCallingIdentity()
+        return try {
+            runCatching {
+                context.contentResolver.call(uriOf(applicationId), method, arg, extras)
+            }.onFailure { error ->
+                onFailure(method, error)
+            }.getOrNull()
+        } finally {
+            Binder.restoreCallingIdentity(identity)
+        }
+    }
 }

@@ -28,10 +28,51 @@ object ProcessContextResolver {
     fun resolveForPackage(packageName: String, fallback: Context? = null): Context? {
         val base = resolve(fallback) ?: return null
         if (packageName.isBlank() || base.packageName == packageName) return base
-        return runCatching {
+        val packageContext = runCatching {
             base.createPackageContext(packageName, Context.CONTEXT_IGNORE_SECURITY)
-        }.getOrNull() ?: base
+        }.getOrNull()
+        if (packageContext?.opPackageName == packageName) return packageContext
+        return createAppContextWithAttribution(packageName) ?: packageContext ?: base
     }
+
+    /**
+     * Android 17's ContextImpl#createPackageContext inherits the container's mOpPackageName, so a
+     * phone package context created from the system context still reports `android` to
+     * ContentResolver. ContextImpl#createAppContext has an explicit op-package parameter and is the
+     * framework's own path for constructing an app attribution source.
+     */
+    private fun createAppContextWithAttribution(packageName: String): Context? = runCatching {
+        val activityThreadClass = Class.forName("android.app.ActivityThread")
+        val activityThread = activityThreadClass.getDeclaredMethod("currentActivityThread").apply {
+            isAccessible = true
+        }.invoke(null) ?: return null
+        val compatibilityInfoClass = Class.forName("android.content.res.CompatibilityInfo")
+        val compatibilityInfo = compatibilityInfoClass.getDeclaredField("DEFAULT_COMPATIBILITY_INFO").apply {
+            isAccessible = true
+        }.get(null)
+        val loadedApkClass = Class.forName("android.app.LoadedApk")
+        val loadedApk = activityThreadClass.getDeclaredMethod(
+            "getPackageInfo",
+            String::class.java,
+            compatibilityInfoClass,
+            Int::class.javaPrimitiveType,
+        ).apply {
+            isAccessible = true
+        }.invoke(
+            activityThread,
+            packageName,
+            compatibilityInfo,
+            Context.CONTEXT_INCLUDE_CODE or Context.CONTEXT_IGNORE_SECURITY,
+        ) ?: return null
+        Class.forName("android.app.ContextImpl").getDeclaredMethod(
+            "createAppContext",
+            activityThreadClass,
+            loadedApkClass,
+            String::class.java,
+        ).apply {
+            isAccessible = true
+        }.invoke(null, activityThread, loadedApk, packageName) as? Context
+    }.getOrNull()
 
     private fun resolveCurrentApplication(): Context? = runCatching {
         val activityThreadClass = Class.forName("android.app.ActivityThread")

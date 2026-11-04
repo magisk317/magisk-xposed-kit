@@ -16,10 +16,21 @@ object ProcessContextResolver {
     private var reflected: Context? = null
 
     fun resolve(fallback: Context? = null): Context? {
-        fallback?.let { return it.applicationContext ?: it }
+        // Keep the supplied package context: ContentResolver uses its attribution package when it
+        // validates the IPC caller UID. `applicationContext` can collapse a phone/MMS package
+        // context back to the `android` system context and recreate the exact mismatch we avoid.
+        fallback?.let { return it }
         reflected?.let { return it }
         val resolved = resolveCurrentApplication() ?: resolveSystemContext() ?: return null
         return resolved.also { reflected = it }
+    }
+
+    fun resolveForPackage(packageName: String, fallback: Context? = null): Context? {
+        val base = resolve(fallback) ?: return null
+        if (packageName.isBlank() || base.packageName == packageName) return base
+        return runCatching {
+            base.createPackageContext(packageName, Context.CONTEXT_IGNORE_SECURITY)
+        }.getOrNull() ?: base
     }
 
     private fun resolveCurrentApplication(): Context? = runCatching {

@@ -10,6 +10,7 @@ import java.util.concurrent.TimeUnit
 class StructuredLogContractTest {
     @Test
     fun `sanitizer redacts message attributes and structured throwable`() {
+        MagiskLogPolicy.install(isDiagnosticBuild = false)
         val record = LogRecord(
             eventId = "event",
             timestampMs = 1L,
@@ -32,6 +33,33 @@ class StructuredLogContractTest {
     }
 
     @Test
+    fun `diagnostic sanitizer keeps bounded plaintext`() {
+        try {
+            MagiskLogPolicy.install(isDiagnosticBuild = true)
+            val value = "token=plaintext-secret " + "x".repeat(200)
+            val record = LogRecord(
+                eventId = "diagnostic",
+                timestampMs = 1L,
+                level = LogLevel.INFO,
+                tag = "test",
+                message = value,
+                attributes = mapOf("authorization" to value),
+                error = LogError("E", value, value),
+                runtimeContext = LogRuntimeContext(source = "test"),
+            )
+
+            val sanitized = StructuredLogSanitizer().sanitize(record)
+
+            assertTrue(sanitized.message.startsWith("token=plaintext-secret"))
+            assertTrue(sanitized.message.length <= DefaultLogSanitizer.LOG_MAX_LENGTH)
+            assertTrue(sanitized.attributes.getValue("authorization").startsWith("token=plaintext-secret"))
+            assertTrue(sanitized.error?.stacktrace.orEmpty().startsWith("token=plaintext-secret"))
+        } finally {
+            MagiskLogPolicy.install(isDiagnosticBuild = false)
+        }
+    }
+
+    @Test
     fun `sanitizer truncates UTF-8 without splitting a code point`() {
         val value = "短信验证码".repeat(100)
         val result = StructuredLogSanitizer.truncateUtf8(value, 17)
@@ -41,6 +69,7 @@ class StructuredLogContractTest {
 
     @Test
     fun `dispatcher is asynchronous and exposes delivery counters`() {
+        MagiskLogPolicy.install(isDiagnosticBuild = true)
         val delivered = CountDownLatch(1)
         val records = mutableListOf<LogRecord>()
         val dispatcher = LogDispatcher(
@@ -67,6 +96,7 @@ class StructuredLogContractTest {
             assertEquals("hello", synchronized(records) { records.single().message })
         } finally {
             dispatcher.close()
+            MagiskLogPolicy.install(isDiagnosticBuild = false)
         }
         assertEquals(DeliveryResult.CLOSED, dispatcher.dispatch(
             LogRecord(
@@ -78,6 +108,34 @@ class StructuredLogContractTest {
                 runtimeContext = LogRuntimeContext(source = "test"),
             ),
         ))
+    }
+
+    @Test
+    fun `dispatcher drops records when logging is disabled`() {
+        MagiskLogPolicy.install(isDiagnosticBuild = false)
+        var sinkCalls = 0
+        val dispatcher = LogDispatcher(
+            sinks = listOf(StructuredLogSink { sinkCalls += 1 }),
+            queueCapacity = 1,
+        )
+        try {
+            val result = dispatcher.dispatch(
+                LogRecord(
+                    eventId = "disabled",
+                    timestampMs = 1L,
+                    level = LogLevel.INFO,
+                    tag = "test",
+                    message = "token=plaintext-secret",
+                    runtimeContext = LogRuntimeContext(source = "test"),
+                ),
+            )
+
+            assertEquals(DeliveryResult.DISABLED, result)
+            assertEquals(0, sinkCalls)
+            assertEquals(1L, dispatcher.snapshot().droppedCount)
+        } finally {
+            dispatcher.close()
+        }
     }
 
     @Test

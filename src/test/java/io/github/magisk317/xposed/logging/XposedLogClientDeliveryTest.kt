@@ -15,8 +15,8 @@ class XposedLogClientDeliveryTest {
 
     @BeforeEach
     fun setUp() {
+        MagiskLogPolicy.install(isDiagnosticBuild = true)
         XposedLogClient.resetForTest()
-        LogSanitizerConfig.setEnabled(false)
         zygoteBuffer = privateField("zygoteBuffer")
         setPrivateField("contextLookupFailed", true)
     }
@@ -25,7 +25,7 @@ class XposedLogClientDeliveryTest {
     fun tearDown() {
         LookupTarget.context = null
         XposedLogClient.resetForTest()
-        LogSanitizerConfig.setEnabled(false)
+        MagiskLogPolicy.install(isDiagnosticBuild = false)
     }
 
     @Test

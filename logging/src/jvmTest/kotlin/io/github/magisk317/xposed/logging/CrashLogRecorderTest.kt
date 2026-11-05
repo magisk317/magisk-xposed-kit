@@ -30,7 +30,7 @@ class CrashLogRecorderTest {
     fun restoreHandler() {
         CrashLogRecorder.uninstall()
         Thread.setDefaultUncaughtExceptionHandler(originalHandler)
-        MagiskLogPolicy.install(isDebugBuild = false)
+        MagiskLogPolicy.install(isDiagnosticBuild = false)
     }
 
     private fun recorderFor(dir: File, prune: (File) -> Unit = {}) {
@@ -38,8 +38,8 @@ class CrashLogRecorderTest {
     }
 
     @Test
-    fun `release policy redacts the crash payload`() {
-        MagiskLogPolicy.install(isDebugBuild = false)
+    fun `release policy does not install or write crash logs`() {
+        MagiskLogPolicy.install(isDiagnosticBuild = false)
         val dir = File(tempDir, "crash")
         recorderFor(dir)
 
@@ -48,17 +48,13 @@ class CrashLogRecorderTest {
             error = IllegalStateException("content=你的验证码是 123456 from=13800138000"),
         )
 
-        assertNotNull(file)
-        val text = file!!.readText()
-        assertTrue(text.contains("IllegalStateException"))
-        assertFalse(text.contains("13800138000"))
-        assertFalse(text.contains("你的验证码是"))
-        assertTrue(file.name.startsWith("Crash_"))
+        assertEquals(null, file)
+        assertFalse(dir.exists())
     }
 
     @Test
     fun `verbose policy keeps the crash payload raw`() {
-        MagiskLogPolicy.install(isDebugBuild = true)
+        MagiskLogPolicy.install(isDiagnosticBuild = true)
         recorderFor(File(tempDir, "raw"))
 
         val file = CrashLogRecorder.record(
@@ -67,12 +63,15 @@ class CrashLogRecorderTest {
         )
 
         assertNotNull(file)
-        assertTrue(file!!.readText().contains("13800138000"))
+        val lines = file!!.readLines()
+        assertTrue(lines.any { it.contains("13800138000") })
+        assertTrue(lines.all { it.length <= DefaultLogSanitizer.LOG_MAX_LENGTH })
+        assertTrue(file.readText().endsWith("\n"))
     }
 
     @Test
     fun `the handler chains the previous default handler and prunes first`() {
-        MagiskLogPolicy.install(isDebugBuild = false)
+        MagiskLogPolicy.install(isDiagnosticBuild = true)
         var chained = 0
         val dir = File(tempDir, "chained")
         Thread.setDefaultUncaughtExceptionHandler { _, _ -> chained += 1 }
@@ -88,6 +87,7 @@ class CrashLogRecorderTest {
 
     @Test
     fun `no crash directory means no file`() {
+        MagiskLogPolicy.install(isDiagnosticBuild = true)
         CrashLogRecorder.install(dirProvider = { null })
 
         assertEquals(null, CrashLogRecorder.record(Thread.currentThread(), IllegalStateException("boom")))

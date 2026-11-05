@@ -4,6 +4,7 @@ import android.util.Log
 import io.github.libxposed.api.XposedInterface
 import io.github.libxposed.api.XposedModule
 import io.github.magisk317.xposed.logging.DefaultLogSanitizer
+import io.github.magisk317.xposed.logging.MagiskLogPolicy
 import java.lang.reflect.Constructor
 import java.lang.reflect.Executable
 import java.lang.reflect.Member
@@ -60,30 +61,19 @@ object XposedRuntime {
     }
 
     fun log(priority: Int, tag: String?, message: String, throwable: Throwable? = null) {
+        if (!MagiskLogPolicy.current().loggingEnabled) return
         val activeModule = module
-        val safeThrowable = throwable?.let(::sanitizeThrowable)
+        val safeMessage = DefaultLogSanitizer.sanitizeIfEnabled(message)
+        val outputMessage = throwable?.let { error ->
+            DefaultLogSanitizer.limitForLog(
+                "$safeMessage exception=${DefaultLogSanitizer.sanitizeIfEnabled(error.stackTraceToString())}",
+            )
+        } ?: safeMessage
         if (activeModule == null) {
-            if (safeThrowable == null) {
-                Log.println(priority, tag ?: "magisk-xposed-kit", message)
-            } else {
-                Log.println(priority, tag ?: "magisk-xposed-kit", "$message\n${Log.getStackTraceString(safeThrowable)}")
-            }
+            Log.println(priority, tag ?: "magisk-xposed-kit", outputMessage)
             return
         }
-        if (safeThrowable == null) {
-            activeModule.log(priority, tag, message)
-        } else {
-            activeModule.log(priority, tag, message, safeThrowable)
-        }
-    }
-
-    private fun sanitizeThrowable(throwable: Throwable): Throwable {
-        val safeText = DefaultLogSanitizer.sanitizeIfEnabled(throwable.stackTraceToString())
-        return Throwable(safeText).apply {
-            // Keep the platform output bounded and prevent the original throwable from being
-            // retained as a cause or rendered again by the Xposed logger.
-            stackTrace = emptyArray()
-        }
+        activeModule.log(priority, tag, outputMessage)
     }
 
     internal fun resetForTest() {

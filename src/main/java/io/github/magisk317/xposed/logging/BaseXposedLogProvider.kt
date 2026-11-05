@@ -50,6 +50,7 @@ abstract class BaseXposedLogProvider : ContentProvider() {
     override fun onCreate(): Boolean = true
 
     override fun insert(uri: Uri, values: ContentValues?): Uri? {
+        if (!MagiskLogPolicy.current().loggingEnabled) return null
         if (uri.authority != authority || uri.lastPathSegment != "entry") return null
         val ctx = context?.applicationContext ?: return null
         if (!isCallerAllowed(ctx)) return null

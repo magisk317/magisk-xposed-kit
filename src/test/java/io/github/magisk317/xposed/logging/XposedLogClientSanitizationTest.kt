@@ -14,7 +14,7 @@ class XposedLogClientSanitizationTest {
 
     @BeforeEach
     fun setUp() {
-        LogSanitizerConfig.setEnabled(true)
+        MagiskLogPolicy.install(isDiagnosticBuild = true)
         zygoteBuffer = privateField("zygoteBuffer")
         zygoteBuffer.clear()
         setPrivateField("localContext", null)
@@ -26,13 +26,13 @@ class XposedLogClientSanitizationTest {
         zygoteBuffer.clear()
         setPrivateField("localContext", null)
         setPrivateField("contextLookupFailed", false)
-        LogSanitizerConfig.setEnabled(false)
+        MagiskLogPolicy.install(isDiagnosticBuild = false)
     }
 
     @Test
-    fun `send sanitizes before buffering the Xposed transport event`() {
-        val token = "xposed-token-secret-123456"
-        val bearer = "xposed-bearer-secret-123456"
+    fun `diagnostic send keeps raw text within the shared limit`() {
+        val token = "token-123"
+        val bearer = "bearer-456"
         val phone = "13800138000"
         XposedLogClient.configure("com.example.log", "SanitizerContract")
 
@@ -51,11 +51,29 @@ class XposedLogClientSanitizationTest {
         val event = zygoteBuffer.poll(1, TimeUnit.SECONDS)
         assertNotNull(event)
         assertTrue(event!!.sanitized)
-        assertFalse(event.message.contains(token))
-        assertFalse(event.message.contains(bearer))
-        assertFalse(event.message.contains(phone))
-        assertFalse(event.throwable.contains(token))
-        assertFalse(event.throwable.contains(phone))
+        assertTrue(event.message.contains(token))
+        assertTrue(event.message.contains(phone))
+        assertTrue(event.message.length <= DefaultLogSanitizer.LOG_MAX_LENGTH)
+        assertTrue(event.throwable.contains(token))
+        assertTrue(event.throwable.contains(phone))
+    }
+
+    @Test
+    fun `release send is dropped before buffering`() {
+        MagiskLogPolicy.install(isDiagnosticBuild = false)
+
+        XposedLogClient.send(
+            XposedLogEvent(
+                source = "release",
+                level = "E",
+                tag = "test",
+                message = "secret",
+                pid = 1,
+                uid = 2,
+            ),
+        )
+
+        assertTrue(zygoteBuffer.isEmpty())
     }
 
     @Suppress("UNCHECKED_CAST")

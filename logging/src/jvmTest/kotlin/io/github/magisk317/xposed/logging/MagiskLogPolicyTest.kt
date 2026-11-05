@@ -8,8 +8,9 @@ import org.junit.jupiter.api.Test
 class MagiskLogPolicyTest {
     @Test
     fun `an uninstalled policy is release-shaped`() {
-        val snapshot = MagiskLogPolicy.evaluate(isDebugBuild = false)
+        val snapshot = MagiskLogPolicy.evaluate(isDiagnosticBuild = false)
 
+        assertFalse(snapshot.loggingEnabled)
         assertFalse(snapshot.verboseLogging)
         assertTrue(snapshot.sanitizesText)
         assertFalse(snapshot.capturesRootHeavyDiagnostics)
@@ -17,9 +18,10 @@ class MagiskLogPolicyTest {
     }
 
     @Test
-    fun `a debug build captures everything`() {
-        val snapshot = MagiskLogPolicy.evaluate(isDebugBuild = true)
+    fun `a diagnostic build captures everything`() {
+        val snapshot = MagiskLogPolicy.evaluate(isDiagnosticBuild = true)
 
+        assertTrue(snapshot.loggingEnabled)
         assertTrue(snapshot.verboseLogging)
         assertFalse(snapshot.sanitizesText)
         assertTrue(snapshot.capturesRootHeavyDiagnostics)
@@ -27,48 +29,16 @@ class MagiskLogPolicyTest {
     }
 
     @Test
-    fun `the plaintext flag drops redaction without widening collection`() {
-        val snapshot = MagiskLogPolicy.evaluate(
-            isDebugBuild = false,
-            allowPlaintextLogs = true,
-        )
-
-        assertFalse(snapshot.verboseLogging)
-        assertFalse(snapshot.sanitizesText)
-        assertFalse(snapshot.capturesRootHeavyDiagnostics)
-        assertTrue(snapshot.allowsLogExport)
-    }
-
-    @Test
     fun `install pushes the decision into the sanitizer switch`() {
         try {
-            assertTrue(MagiskLogPolicy.install(isDebugBuild = false).sanitizesText)
+            assertTrue(MagiskLogPolicy.install(isDiagnosticBuild = false).sanitizesText)
             assertTrue(LogSanitizerConfig.isEnabled())
 
-            MagiskLogPolicy.install(isDebugBuild = true)
+            MagiskLogPolicy.install(isDiagnosticBuild = true)
             assertFalse(LogSanitizerConfig.isEnabled())
-            assertEquals(MagiskLogPolicy.current(), MagiskLogPolicy.evaluate(isDebugBuild = true))
+            assertEquals(MagiskLogPolicy.current(), MagiskLogPolicy.evaluate(isDiagnosticBuild = true))
         } finally {
-            MagiskLogPolicy.install(isDebugBuild = false)
-            assertTrue(LogSanitizerConfig.isEnabled())
-        }
-    }
-
-    @Test
-    fun `a user switch raises redaction but never lowers it below the build`() {
-        try {
-            MagiskLogPolicy.install(isDebugBuild = false)
-            LogSanitizerConfig.applyUserSwitch(userWantsSanitized = false)
-            assertTrue(LogSanitizerConfig.isEnabled())
-
-            MagiskLogPolicy.install(isDebugBuild = true)
-            LogSanitizerConfig.applyUserSwitch(userWantsSanitized = false)
-            assertFalse(LogSanitizerConfig.isEnabled())
-
-            LogSanitizerConfig.applyUserSwitch(userWantsSanitized = true)
-            assertTrue(LogSanitizerConfig.isEnabled())
-        } finally {
-            MagiskLogPolicy.install(isDebugBuild = false)
+            MagiskLogPolicy.install(isDiagnosticBuild = false)
             assertTrue(LogSanitizerConfig.isEnabled())
         }
     }

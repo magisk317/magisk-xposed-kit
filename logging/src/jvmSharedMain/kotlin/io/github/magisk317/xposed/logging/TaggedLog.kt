@@ -11,33 +11,38 @@ class TaggedLog internal constructor(private val tag: String) {
 
     fun v(message: String, throwable: Throwable? = null) = dispatch(LogLevel.VERBOSE, message, throwable)
 
-    fun v(throwable: Throwable?, message: () -> String) = dispatch(LogLevel.VERBOSE, message(), throwable)
+    fun v(throwable: Throwable?, message: () -> String) = dispatchLazy(LogLevel.VERBOSE, throwable, message)
 
-    fun v(message: () -> String) = dispatch(LogLevel.VERBOSE, message(), null)
+    fun v(message: () -> String) = dispatchLazy(LogLevel.VERBOSE, null, message)
 
     fun d(message: String, throwable: Throwable? = null) = dispatch(LogLevel.DEBUG, message, throwable)
 
-    fun d(throwable: Throwable?, message: () -> String) = dispatch(LogLevel.DEBUG, message(), throwable)
+    fun d(throwable: Throwable?, message: () -> String) = dispatchLazy(LogLevel.DEBUG, throwable, message)
 
-    fun d(message: () -> String) = dispatch(LogLevel.DEBUG, message(), null)
+    fun d(message: () -> String) = dispatchLazy(LogLevel.DEBUG, null, message)
 
     fun i(message: String, throwable: Throwable? = null) = dispatch(LogLevel.INFO, message, throwable)
 
-    fun i(throwable: Throwable?, message: () -> String) = dispatch(LogLevel.INFO, message(), throwable)
+    fun i(throwable: Throwable?, message: () -> String) = dispatchLazy(LogLevel.INFO, throwable, message)
 
-    fun i(message: () -> String) = dispatch(LogLevel.INFO, message(), null)
+    fun i(message: () -> String) = dispatchLazy(LogLevel.INFO, null, message)
 
     fun w(message: String, throwable: Throwable? = null) = dispatch(LogLevel.WARN, message, throwable)
 
-    fun w(throwable: Throwable?, message: () -> String) = dispatch(LogLevel.WARN, message(), throwable)
+    fun w(throwable: Throwable?, message: () -> String) = dispatchLazy(LogLevel.WARN, throwable, message)
 
-    fun w(message: () -> String) = dispatch(LogLevel.WARN, message(), null)
+    fun w(message: () -> String) = dispatchLazy(LogLevel.WARN, null, message)
 
     fun e(message: String, throwable: Throwable? = null) = dispatch(LogLevel.ERROR, message, throwable)
 
-    fun e(throwable: Throwable?, message: () -> String) = dispatch(LogLevel.ERROR, message(), throwable)
+    fun e(throwable: Throwable?, message: () -> String) = dispatchLazy(LogLevel.ERROR, throwable, message)
 
-    fun e(message: () -> String) = dispatch(LogLevel.ERROR, message(), null)
+    fun e(message: () -> String) = dispatchLazy(LogLevel.ERROR, null, message)
+
+    private fun dispatchLazy(level: LogLevel, throwable: Throwable?, message: () -> String) {
+        if (!MagiskLogPolicy.current().loggingEnabled) return
+        dispatch(level, message(), throwable)
+    }
 
     private fun dispatch(level: LogLevel, message: String, throwable: Throwable?) {
         if (throwable == null) {

@@ -122,7 +122,6 @@ abstract class BaseLibXposedEntry : XposedModule {
     override fun onModuleLoaded(param: ModuleLoadedParam) {
         val api = apiVersion
         if (api < minApiVersion) {
-            Log.w(logTag, "skipped: apiVersion=$api < $minApiVersion")
             return
         }
 
@@ -210,7 +209,7 @@ abstract class BaseLibXposedEntry : XposedModule {
             cleanupForHotReload()
             true
         }.getOrElse { t ->
-            Log.e(logTag, "hot reload rejected: ${t.message}", t)
+            XposedRuntime.log(Log.ERROR, logTag, "hot reload rejected", t)
             false
         }
     }
@@ -245,7 +244,7 @@ abstract class BaseLibXposedEntry : XposedModule {
             hookApi.finishHotReload()
         } catch (@Suppress("TooGenericExceptionCaught") t: Throwable) {
             hookApi.abortHotReload()
-            Log.e(logTag, "hot reload failed", t)
+            XposedRuntime.log(Log.ERROR, logTag, "hot reload failed", t)
             throw t
         }
         logInfo("onHotReloaded: replaced hooks, removed $removed stale hooks")
@@ -257,7 +256,14 @@ abstract class BaseLibXposedEntry : XposedModule {
         for (hook in hooks) {
             if (hook.hookInitZygote()) {
                 runCatching { hook.initZygote() }
-                    .onFailure { Log.e(logTag, "initZygote failed: ${hook.javaClass.simpleName}", it) }
+                    .onFailure {
+                        XposedRuntime.log(
+                            Log.ERROR,
+                            logTag,
+                            "initZygote failed: ${hook.javaClass.simpleName}",
+                            it,
+                        )
+                    }
             }
         }
     }
@@ -607,7 +613,12 @@ abstract class BaseLibXposedEntry : XposedModule {
         for (hook in hooks) {
             runCatching { hook.onHotReloading() }
                 .onFailure { t ->
-                    Log.e(logTag, "Hot reload cleanup failed: ${hook.javaClass.name}", t)
+                    XposedRuntime.log(
+                        Log.ERROR,
+                        logTag,
+                        "Hot reload cleanup failed: ${hook.javaClass.name}",
+                        t,
+                    )
                 }
         }
     }

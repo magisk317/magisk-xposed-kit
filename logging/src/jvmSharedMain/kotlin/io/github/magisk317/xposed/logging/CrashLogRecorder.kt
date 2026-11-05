@@ -37,6 +37,7 @@ object CrashLogRecorder {
         dirProvider: () -> File?,
         prune: (File) -> Unit = {},
     ) {
+        if (!MagiskLogPolicy.current().loggingEnabled) return
         if (installed) return
         installed = true
         crashDirProvider = dirProvider
@@ -60,6 +61,7 @@ object CrashLogRecorder {
 
     /** Append [error] to today's crash file; returns null when nothing could be written. */
     fun record(thread: Thread, error: Throwable, prune: (File) -> Unit = {}): File? {
+        if (!MagiskLogPolicy.current().loggingEnabled) return null
         val dir = crashDirProvider?.invoke() ?: return null
         return writeCrash(dir, thread, error, prune)
     }
@@ -100,15 +102,18 @@ object CrashLogRecorder {
         val file = File(dir, "$FILE_PREFIX$stamp.txt")
         val time = SimpleDateFormat(TIMESTAMP_PATTERN, Locale.US).format(Date())
         val text = buildString {
-            appendLine("$time [ERROR] Uncaught on ${thread.name}: ${error.javaClass.name}: ${error.message}")
+            appendLine("$time [ERROR] Uncaught on ${thread.name}: ${error.javaClass.name}")
+            error.message?.takeIf { it.isNotBlank() }?.let { appendLine("message=$it") }
             appendLine(error.stackTraceToString())
         }
-        val payload = if (MagiskLogPolicy.current().sanitizesText) {
-            DefaultLogSanitizer.sanitizeUnbounded(text)
-        } else {
-            text
+        val payload = text.lineSequence().joinToString("\n") { line ->
+            if (MagiskLogPolicy.current().sanitizesText) {
+                DefaultLogSanitizer.sanitize(line)
+            } else {
+                DefaultLogSanitizer.limitForLog(line)
+            }
         }
-        file.appendText(payload)
+        file.appendText(payload.trimEnd('\n') + "\n")
         file
     }.getOrNull()
 }

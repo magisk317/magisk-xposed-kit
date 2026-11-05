@@ -14,8 +14,8 @@ object NoopLogSanitizer : LogSanitizer {
  * Process-wide switch controlling whether [DefaultLogSanitizer] deep-sanitizes.
  *
  * Neutral to any host application. [MagiskLogPolicy.install] drives it from the build flags,
- * so the value cannot come from a stored preference: a released app must sanitize even if the
- * device still holds a verbose preference written by an older build.
+ * so the value cannot come from a stored preference. Public releases normally short-circuit
+ * before sanitization; keeping this switch enabled is a fail-closed fallback for missed paths.
  *
  * Default is `true` (sanitized), so a process that never installs a policy leaks nothing.
  */
@@ -27,21 +27,12 @@ object LogSanitizerConfig {
         sanitizationEnabled = enabled
     }
 
-    /**
-     * Apply a host's user-facing redaction switch without letting it undercut the build:
-     * a released app keeps redacting when the switch is off, while a debug build — the
-     * capture channel — may run plaintext because that is what its developer switched on.
-     */
-    fun applyUserSwitch(userWantsSanitized: Boolean) {
-        setEnabled(MagiskLogPolicy.current().sanitizesText || userWantsSanitized)
-    }
-
     fun isEnabled(): Boolean = sanitizationEnabled
 }
 
 /** Redacts credentials without applying payload summaries or log length limits. */
 object DefaultLogSanitizer : LogSanitizer {
-    private const val SANITIZED_LOG_MAX_LENGTH = 800
+    const val LOG_MAX_LENGTH = 80
     private const val HIGH_ENTROPY_MIN_LENGTH = 16
     private const val REDACT_EDGE_KEEP = 4
 
@@ -58,21 +49,23 @@ object DefaultLogSanitizer : LogSanitizer {
     private val codeFieldNames = listOf("code", "smsCode", "otp", "verifyCode")
 
     override fun sanitize(message: String): String {
-        return truncate(sanitizeUnbounded(message), SANITIZED_LOG_MAX_LENGTH)
+        return limitForLog(sanitizeUnbounded(message))
     }
 
     /**
-     * Sanitize when [LogSanitizerConfig] is enabled (the default, and the only mode a
-     * distributed release runs with). A verbose CI or debug build skips redaction and only
-     * applies the length cap, because raw content is the point of that capture channel.
+     * Sanitize when [LogSanitizerConfig] is enabled. An internal CI or debug build skips
+     * redaction and applies only the shared 80-character cap; public releases emit no logs.
      */
     fun sanitizeIfEnabled(message: String): String {
         return if (LogSanitizerConfig.isEnabled()) {
             sanitize(message)
         } else {
-            truncate(message, SANITIZED_LOG_MAX_LENGTH)
+            limitForLog(message)
         }
     }
+
+    /** Keep every rendered log line within the shared diagnostic budget. */
+    fun limitForLog(message: String): String = truncate(message, LOG_MAX_LENGTH)
 
     fun sanitizeUnbounded(message: String): String {
         var sanitized = SecretRedactor.redact(message)
@@ -168,6 +161,8 @@ object DefaultLogSanitizer : LogSanitizer {
 
     private fun truncate(value: String, max: Int): String {
         if (value.length <= max) return value
-        return value.take(max) + "...(len=${value.length})"
+        val suffix = "...(len=${value.length})"
+        if (suffix.length >= max) return suffix.take(max)
+        return value.take(max - suffix.length) + suffix
     }
 }

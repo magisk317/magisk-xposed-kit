@@ -9,24 +9,14 @@ import org.junit.jupiter.api.Test
 class DiagnosticExportModeTest {
     @Test
     fun `a verbose build requests full diagnostics`() {
-        val policy = MagiskLogPolicy.evaluate(isDebugBuild = true)
+        val policy = MagiskLogPolicy.evaluate(isDiagnosticBuild = true)
 
         assertEquals(DiagnosticExportMode.FULL, DiagnosticExportMode.of(policy))
     }
 
     @Test
     fun `a release build requests standard diagnostics`() {
-        val policy = MagiskLogPolicy.evaluate(isDebugBuild = false)
-
-        assertEquals(DiagnosticExportMode.STANDARD, DiagnosticExportMode.of(policy))
-    }
-
-    @Test
-    fun `a plaintext-only build still stays bounded`() {
-        val policy = MagiskLogPolicy.evaluate(
-            isDebugBuild = false,
-            allowPlaintextLogs = true,
-        )
+        val policy = MagiskLogPolicy.evaluate(isDiagnosticBuild = false)
 
         assertEquals(DiagnosticExportMode.STANDARD, DiagnosticExportMode.of(policy))
     }
@@ -34,11 +24,11 @@ class DiagnosticExportModeTest {
     @Test
     fun `current mode follows the installed policy`() {
         try {
-            MagiskLogPolicy.install(isDebugBuild = true)
+            MagiskLogPolicy.install(isDiagnosticBuild = true)
 
             assertEquals(DiagnosticExportMode.FULL, DiagnosticExportMode.current())
         } finally {
-            MagiskLogPolicy.install(isDebugBuild = false)
+            MagiskLogPolicy.install(isDiagnosticBuild = false)
         }
     }
 

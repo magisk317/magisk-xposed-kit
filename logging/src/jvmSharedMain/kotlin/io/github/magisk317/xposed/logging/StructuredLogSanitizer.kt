@@ -17,7 +17,8 @@ class StructuredLogSanitizer(
     }
 
     fun sanitize(record: LogRecord): LogRecord {
-        val redact = record.sensitive || record.privacyMode == PrivacyMode.SANITIZED
+        val redact = LogSanitizerConfig.isEnabled() &&
+            (record.sensitive || record.privacyMode == PrivacyMode.SANITIZED)
         fun apply(value: String, maxBytes: Int): String {
             val sanitized = if (redact) {
                 runCatching { sanitizer.sanitize(value) }
@@ -25,7 +26,7 @@ class StructuredLogSanitizer(
             } else {
                 DefaultLogSanitizer.sanitizeIfEnabled(value)
             }
-            return truncateUtf8(sanitized, maxBytes)
+            return truncateUtf8(DefaultLogSanitizer.limitForLog(sanitized), maxBytes)
         }
 
         val safeError = record.error?.let { error ->
@@ -41,7 +42,10 @@ class StructuredLogSanitizer(
                 if (redact) {
                     val sanitized = runCatching { sanitizer.sanitize("$name=$value") }
                         .getOrElse { DefaultLogSanitizer.sanitizeIfEnabled("$name=$value") }
-                    truncateUtf8(sanitized.substringAfter('=', sanitized), maxAttributeBytes)
+                    truncateUtf8(
+                        DefaultLogSanitizer.limitForLog(sanitized.substringAfter('=', sanitized)),
+                        maxAttributeBytes,
+                    )
                 } else {
                     apply(value, maxAttributeBytes)
                 }

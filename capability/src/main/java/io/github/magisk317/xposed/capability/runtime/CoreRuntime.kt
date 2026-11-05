@@ -1,6 +1,7 @@
 package io.github.magisk317.xposed.capability.runtime
 
 import android.util.Log
+import io.github.magisk317.xposed.logging.MagiskLogPolicy
 import io.github.magisk317.xposed.logging.MagiskOtel
 
 interface CoreRuntimeAccess {
@@ -18,11 +19,12 @@ object CoreRuntime {
 
     fun install(access: CoreRuntimeAccess) {
         accessRef = access
+        val logPolicy = MagiskLogPolicy.current()
         io.github.magisk317.xposed.logging.XLog.configure(
             tag = access.logTag,
             logLevel = access.logLevel,
-            logToXposed = access.logToXposed,
-            sink = io.github.magisk317.xposed.logging.LogSink { event ->
+            logToXposed = access.logToXposed && logPolicy.loggingEnabled,
+            sink = if (logPolicy.loggingEnabled) io.github.magisk317.xposed.logging.LogSink { event ->
                 CoreLogSinkHolder.append(
                     priority = event.priority,
                     tag = event.tag,
@@ -32,7 +34,8 @@ object CoreRuntime {
                     sensitive = event.sensitive,
                     throwableText = event.throwableText ?: event.throwable?.stackTraceToString(),
                 )
-            },
+            } else null,
+            printEnabled = logPolicy.loggingEnabled,
         )
         MagiskOtel.event(
             name = "hook.load",

@@ -3,10 +3,11 @@ package io.github.magisk317.xposed.logging
 /**
  * The repository-wide log policy, derived from the build and set once per process.
  *
- * Formal releases print as little as possible, sanitize whatever they write, and refuse to
- * export a bundle. Debug builds are the capture channel, so they keep raw text and export
- * everything they can reach. A CI flag never widens a release: a Play beta AAB is still a
- * distributed release, so the build type alone selects the capture channel.
+ * Public releases do not emit application-owned logs at all. Debug builds and explicitly
+ * internal CI builds are diagnostic builds: they keep raw text, persist logs, and allow export.
+ * Some CI APK/AAB jobs deliberately use a release Android build type for signing and Play
+ * compatibility, so hosts must pass the diagnostic-channel decision rather than re-derive it
+ * from `BuildConfig.DEBUG` inside this shared module.
  *
  * The decision comes from build flags only. A stored preference is never consulted: a
  * preference survives an update, and a released app that stopped honoring it after the UI
@@ -21,6 +22,7 @@ object MagiskLogPolicy {
     const val MIN_LOG_RETENTION_DAYS = 1
 
     data class Snapshot(
+        val loggingEnabled: Boolean,
         val verboseLogging: Boolean,
         val sanitizesText: Boolean,
     ) {
@@ -29,35 +31,31 @@ object MagiskLogPolicy {
             get() = verboseLogging
 
         /**
-         * A release keeps its logs on-device. Only a debug build or an explicit
-         * local plaintext override may produce an archive.
+         * Diagnostic builds may produce an archive. Public releases have neither
+         * an archive nor an application-owned log stream to package.
          */
         val allowsLogExport: Boolean
-            get() = verboseLogging || !sanitizesText
+            get() = loggingEnabled
     }
 
-    /** Release-safe default: a process that never installed a policy sanitizes and stays quiet. */
+    /** Release-safe default: a process that never installed a policy emits nothing. */
     @Volatile
-    private var currentSnapshot: Snapshot = Snapshot(verboseLogging = false, sanitizesText = true)
+    private var currentSnapshot: Snapshot = Snapshot(
+        loggingEnabled = false,
+        verboseLogging = false,
+        sanitizesText = true,
+    )
 
-    fun evaluate(
-        isDebugBuild: Boolean,
-        allowPlaintextLogs: Boolean = false,
-    ): Snapshot {
+    fun evaluate(isDiagnosticBuild: Boolean): Snapshot {
         return Snapshot(
-            verboseLogging = isDebugBuild,
-            sanitizesText = !(isDebugBuild || allowPlaintextLogs),
+            loggingEnabled = isDiagnosticBuild,
+            verboseLogging = isDiagnosticBuild,
+            sanitizesText = !isDiagnosticBuild,
         )
     }
 
-    fun install(
-        isDebugBuild: Boolean,
-        allowPlaintextLogs: Boolean = false,
-    ): Snapshot {
-        val snapshot = evaluate(
-            isDebugBuild = isDebugBuild,
-            allowPlaintextLogs = allowPlaintextLogs,
-        )
+    fun install(isDiagnosticBuild: Boolean): Snapshot {
+        val snapshot = evaluate(isDiagnosticBuild = isDiagnosticBuild)
         currentSnapshot = snapshot
         LogSanitizerConfig.setEnabled(snapshot.sanitizesText)
         return snapshot

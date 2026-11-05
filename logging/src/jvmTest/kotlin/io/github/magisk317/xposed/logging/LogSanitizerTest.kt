@@ -23,7 +23,7 @@ class LogSanitizerTest {
     @Test
     fun `truncates overly long messages`() {
         val result = DefaultLogSanitizer.sanitize("x".repeat(2000))
-        assertTrue(result.length <= 900)
+        assertTrue(result.length <= DefaultLogSanitizer.LOG_MAX_LENGTH)
     }
 
     @Test
@@ -76,7 +76,7 @@ class LogSanitizerTest {
             val result = DefaultLogSanitizer.sanitizeIfEnabled(message)
 
             assertTrue(result.startsWith("token=abcdef123456 "))
-            assertFalse(result.contains("x".repeat(801)))
+            assertTrue(result.length <= DefaultLogSanitizer.LOG_MAX_LENGTH)
             assertTrue(result.endsWith("...(len=${message.length})"))
         } finally {
             LogSanitizerConfig.setEnabled(false)
@@ -84,9 +84,9 @@ class LogSanitizerTest {
     }
 
     @Test
-    fun `a verbose build turns redaction off`() {
+    fun `a diagnostic build turns redaction off`() {
         try {
-            MagiskLogPolicy.install(isDebugBuild = true)
+            MagiskLogPolicy.install(isDiagnosticBuild = true)
 
             assertFalse(LogSanitizerConfig.isEnabled())
         } finally {
@@ -95,9 +95,9 @@ class LogSanitizerTest {
     }
 
     @Test
-    fun `a release build keeps redaction on`() {
+    fun `a release policy keeps fail closed redaction on`() {
         try {
-            MagiskLogPolicy.install(isDebugBuild = false)
+            MagiskLogPolicy.install(isDiagnosticBuild = false)
 
             assertTrue(LogSanitizerConfig.isEnabled())
         } finally {

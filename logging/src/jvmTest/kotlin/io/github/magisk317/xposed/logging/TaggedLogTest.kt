@@ -16,6 +16,7 @@ class TaggedLogTest {
     @AfterEach
     fun reset() {
         XLog.resetForTest()
+        MagiskLogPolicy.install(isDiagnosticBuild = false)
     }
 
     // The XLog singleton is shared across every test class in this JVM: a
@@ -23,6 +24,7 @@ class TaggedLogTest {
     // these events before the capturing sink sees them. Reset first.
     private fun resetAndConfigure(sink: LogSink) {
         XLog.resetForTest()
+        MagiskLogPolicy.install(isDiagnosticBuild = true)
         XLog.configure(tag = "base", logLevel = LogLevel.VERBOSE.priority, sink = sink)
     }
 
@@ -68,5 +70,19 @@ class TaggedLogTest {
 
         assertEquals(1, sink.events.size)
         assertEquals("kept", sink.events[0].message)
+    }
+
+    @Test
+    fun releasePolicyDoesNotEvaluateTaggedMessageLambda() {
+        XLog.resetForTest()
+        MagiskLogPolicy.install(isDiagnosticBuild = false)
+        var evaluated = false
+
+        XLog.tagged("Push").w {
+            evaluated = true
+            "secret"
+        }
+
+        assertEquals(false, evaluated)
     }
 }

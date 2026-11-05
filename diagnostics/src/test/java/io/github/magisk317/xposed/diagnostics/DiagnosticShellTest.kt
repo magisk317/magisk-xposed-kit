@@ -22,7 +22,7 @@ class DiagnosticShellTest {
             stagingDir = stagingDir,
             details = details,
             mode = DiagnosticExportMode.of(
-                MagiskLogPolicy.evaluate(isDebugBuild = false),
+                MagiskLogPolicy.evaluate(isDiagnosticBuild = false),
             ),
         )
 

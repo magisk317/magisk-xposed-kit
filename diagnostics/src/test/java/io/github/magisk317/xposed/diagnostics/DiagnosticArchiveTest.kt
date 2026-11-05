@@ -27,7 +27,7 @@ class DiagnosticArchiveTest {
 
     @AfterEach
     fun resetPolicy() {
-        MagiskLogPolicy.install(isDebugBuild = false)
+        MagiskLogPolicy.install(isDiagnosticBuild = false)
     }
 
     private fun exportWith(collect: (File, MutableList<String>) -> Unit): DiagnosticArchive.BundleResult {
@@ -97,7 +97,7 @@ class DiagnosticArchiveTest {
 
     @Test
     fun buildBundle_producesShareableZipWhenNoLogsCollected() {
-        MagiskLogPolicy.install(isDebugBuild = true)
+        MagiskLogPolicy.install(isDiagnosticBuild = true)
 
         val result = exportWith { _, details -> details += "app log missing" }
 
@@ -111,7 +111,7 @@ class DiagnosticArchiveTest {
 
     @Test
     fun buildBundle_stopsWhenStaleStagingCannotBeDeleted() {
-        MagiskLogPolicy.install(isDebugBuild = true)
+        MagiskLogPolicy.install(isDiagnosticBuild = true)
         val exportDir = File(tempDir, "export").apply { mkdirs() }
         File(exportDir, ".tmp_smscode_logs_fixed").mkdirs()
         var collected = false
@@ -134,7 +134,7 @@ class DiagnosticArchiveTest {
 
     @Test
     fun `a release build refuses to export`() {
-        MagiskLogPolicy.install(isDebugBuild = false)
+        MagiskLogPolicy.install(isDiagnosticBuild = false)
         var collected = false
 
         val result = exportWith { _, _ -> collected = true }
@@ -147,7 +147,7 @@ class DiagnosticArchiveTest {
 
     @Test
     fun `a verbose build says so instead of silently exporting raw text`() {
-        MagiskLogPolicy.install(isDebugBuild = true)
+        MagiskLogPolicy.install(isDiagnosticBuild = true)
 
         val result = exportWith { stagingDir, _ ->
             File(stagingDir, "logcat").mkdirs()
@@ -161,7 +161,7 @@ class DiagnosticArchiveTest {
 
     @Test
     fun `every bundle states which device and build produced it`() {
-        MagiskLogPolicy.install(isDebugBuild = true)
+        MagiskLogPolicy.install(isDiagnosticBuild = true)
 
         val result = exportWith { _, _ -> }
 

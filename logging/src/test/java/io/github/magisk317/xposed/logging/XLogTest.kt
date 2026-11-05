@@ -18,6 +18,7 @@ class XLogTest {
 
     @BeforeEach
     fun setup() {
+        MagiskLogPolicy.install(isDiagnosticBuild = true)
         // Establish the neutral XLog -> CoreLogSinkHolder bridge with the core tag,
         // so log tag/sink state is deterministic and not leaked from other tests.
         CoreRuntime.install(
@@ -36,6 +37,7 @@ class XLogTest {
     fun tearDown() {
         CoreRuntime.resetForTest()
         CoreLogSinkHolder.install(null)
+        MagiskLogPolicy.install(isDiagnosticBuild = false)
     }
 
     @Test

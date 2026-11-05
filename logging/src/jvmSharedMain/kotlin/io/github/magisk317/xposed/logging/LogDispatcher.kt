@@ -55,6 +55,10 @@ class LogDispatcher(
             droppedCount.incrementAndGet()
             return DeliveryResult.CLOSED
         }
+        if (!MagiskLogPolicy.current().loggingEnabled) {
+            droppedCount.incrementAndGet()
+            return DeliveryResult.DISABLED
+        }
         val safeRecord = sanitizer.sanitize(record)
         return try {
             executor.execute {

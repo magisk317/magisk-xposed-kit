@@ -183,6 +183,7 @@ object XLog {
         metadata: Map<String, String>,
     ) {
         if (priority < sLogLevel) return
+        if (!MagiskLogPolicy.current().loggingEnabled && testSink == null && logPrinterForTest == null) return
 
         val effectiveTag = tag ?: logTag
         val formattedMessage = LogFormatter.formatArgs(message, args)
@@ -213,13 +214,15 @@ object XLog {
                 force = force,
                 sensitive = sensitive,
                 throwableText = outputThrowable,
-                metadata = metadata,
+                metadata = metadata.mapValues { (_, value) ->
+                    DefaultLogSanitizer.limitForLog(value)
+                },
             ),
         )
     }
 
     private fun prepareForOutput(message: String, sensitive: Boolean): String {
-        if (!sensitive) return message
+        if (!sensitive) return DefaultLogSanitizer.limitForLog(message)
         if (!LogSanitizerConfig.isEnabled()) {
             return DefaultLogSanitizer.sanitizeIfEnabled(message)
         }

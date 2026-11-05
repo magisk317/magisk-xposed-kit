@@ -3,6 +3,8 @@ package io.github.magisk317.xposed
 import android.util.Log
 import io.github.libxposed.api.XposedInterface
 import io.github.libxposed.api.XposedModule
+import io.github.magisk317.xposed.logging.DefaultLogSanitizer
+import io.github.magisk317.xposed.logging.MagiskLogPolicy
 import java.lang.reflect.Executable
 import java.lang.reflect.Member
 import java.lang.reflect.Method
@@ -65,7 +67,9 @@ class LibXposedHookApi(
         }
         staleHandles.forEach { handle ->
             runCatching { handle.unhook() }
-                .onFailure { module.log(Log.WARN, LOG_TAG, "Failed to unhook stale hot reload handle", it) }
+                .onFailure {
+                    XposedRuntime.log(Log.WARN, LOG_TAG, "Failed to unhook stale hot reload handle", it)
+                }
         }
         val removed = staleHandles.size
         pendingOldHooksById.clear()
@@ -109,11 +113,7 @@ class LibXposedHookApi(
     }
 
     override fun log(priority: Int, tag: String?, msg: String, tr: Throwable?) {
-        if (tr != null) {
-            module.log(priority, tag, msg, tr)
-        } else {
-            module.log(priority, tag, msg)
-        }
+        XposedRuntime.log(priority, tag, msg, tr)
     }
 
     override fun getApiVersion(): Int? = module.apiVersion
@@ -135,7 +135,11 @@ class LibXposedHookApi(
             .firstNotNullOfOrNull { id -> takePendingHook(pendingOldHooksById[id]) }
             ?: takeUniquePendingHookByExecutable(executableSignature)
                 ?.also {
-                    module.log(Log.INFO, LOG_TAG, "Replacing hot reload hook by executable signature: $executableSignature")
+                    XposedRuntime.log(
+                        Log.INFO,
+                        LOG_TAG,
+                        "Replacing hot reload hook by executable signature: $executableSignature",
+                    )
                 }
         if (oldHandle != null) {
             replacedHookCount += 1
@@ -195,8 +199,10 @@ class LibXposedHookApi(
     }
 
     private fun logHotReloadDiagnostic(message: String) {
-        module.log(Log.INFO, LOG_TAG, message)
-        runCatching { Log.i(LOG_TAG, message) }.onFailure {
+        if (!MagiskLogPolicy.current().loggingEnabled) return
+        val safeMessage = DefaultLogSanitizer.sanitizeIfEnabled(message)
+        XposedRuntime.log(Log.INFO, LOG_TAG, safeMessage)
+        runCatching { Log.i(LOG_TAG, safeMessage) }.onFailure {
             // The module log above already carried the diagnostic; this is only the logcat echo.
         }
     }
@@ -219,7 +225,7 @@ class LibXposedHookApi(
                     callback.beforeHookedMethod(param)
                 }.exceptionOrNull()
                 if (beforeFailure != null) {
-                    module.log(Log.WARN, LOG_TAG, "Hook before failed: ${member.name}", beforeFailure)
+                    XposedRuntime.log(Log.WARN, LOG_TAG, "Hook before failed: ${member.name}", beforeFailure)
                 }
                 if (param.returnEarly) {
                     val throwable = param.throwable
@@ -242,7 +248,7 @@ class LibXposedHookApi(
                     callback.afterHookedMethod(param)
                 }.exceptionOrNull()
                 if (afterFailure != null) {
-                    module.log(Log.WARN, LOG_TAG, "Hook after failed: ${member.name}", afterFailure)
+                    XposedRuntime.log(Log.WARN, LOG_TAG, "Hook after failed: ${member.name}", afterFailure)
                 }
                 val finalThrowable = param.throwable
                 if (finalThrowable != null) throw finalThrowable

@@ -11,13 +11,13 @@ class XLogTest {
 
     @BeforeEach
     fun setUp() {
-        LogSanitizerConfig.setEnabled(true)
+        MagiskLogPolicy.install(isDiagnosticBuild = false)
     }
 
     @AfterEach
     fun tearDown() {
         XLog.resetForTest()
-        LogSanitizerConfig.setEnabled(false)
+        MagiskLogPolicy.install(isDiagnosticBuild = false)
     }
 
     @Test
@@ -97,7 +97,44 @@ class XLogTest {
 
         assertTrue(captured.orEmpty().startsWith("token=plaintext-secret "))
         assertTrue(captured.orEmpty().endsWith("...(len=${rawMessage.length})"))
-        assertFalse(captured.orEmpty().contains("x".repeat(801)))
+        assertTrue(captured.orEmpty().length <= DefaultLogSanitizer.LOG_MAX_LENGTH)
+    }
+
+    @Test
+    fun `release policy drops before formatting or dispatch`() {
+        var sinkCalls = 0
+        XLog.configure(
+            tag = "test",
+            logLevel = LogLevel.VERBOSE.priority,
+            sink = LogSink { sinkCalls += 1 },
+            printEnabled = false,
+        )
+
+        XLog.i(message = "body=%s", "plaintext-secret")
+
+        assertEquals(0, sinkCalls)
+    }
+
+    @Test
+    fun `diagnostic metadata stays raw within the shared limit`() {
+        var captured: LogEvent? = null
+        MagiskLogPolicy.install(isDiagnosticBuild = true)
+        XLog.configure(
+            tag = "test",
+            logLevel = LogLevel.VERBOSE.priority,
+            sink = LogSink { event -> captured = event },
+            printEnabled = false,
+        )
+        val value = "token=plaintext-secret " + "x".repeat(200)
+
+        XLog.structured(
+            level = LogLevel.INFO,
+            message = "metadata",
+            metadata = mapOf("authorization" to value),
+        )
+
+        assertTrue(captured?.metadata?.get("authorization").orEmpty().startsWith("token=plaintext-secret"))
+        assertTrue(captured?.metadata?.get("authorization").orEmpty().length <= DefaultLogSanitizer.LOG_MAX_LENGTH)
     }
 
     @Test

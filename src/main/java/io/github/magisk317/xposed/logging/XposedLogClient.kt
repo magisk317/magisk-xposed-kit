@@ -114,11 +114,13 @@ object XposedLogClient {
     private const val PROVIDER_BACKOFF_MS = 60_000L
 
     fun configure(authority: String, source: String) {
+        if (!MagiskLogPolicy.current().loggingEnabled) return
         this.authority = authority
         this.source = source
     }
 
     fun attachContext(context: Context) {
+        if (!MagiskLogPolicy.current().loggingEnabled) return
         synchronized(zygoteLock) {
             localContext = context.applicationContext ?: context
             contextLookupFailed = false
@@ -184,6 +186,7 @@ object XposedLogClient {
     }
 
     fun send(event: XposedLogEvent) {
+        if (!MagiskLogPolicy.current().loggingEnabled) return
         val sanitizedEvent = sanitizeEvent(event)
         // Fast path: context already available, no lock or reflection needed
         val fastCtx = localContext
@@ -253,6 +256,7 @@ object XposedLogClient {
         sensitive: Boolean = false,
         throwableText: String? = null,
     ) {
+        if (!MagiskLogPolicy.current().loggingEnabled) return
         val event = XposedLogEvent(
             source = source,
             level = level,

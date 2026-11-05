@@ -7,6 +7,7 @@ import io.github.magisk317.xposed.capability.runtime.CoreLogSink
 import io.github.magisk317.xposed.capability.runtime.CoreLogSinkHolder
 import io.github.magisk317.xposed.capability.runtime.CoreRuntime
 import io.github.magisk317.xposed.capability.runtime.CoreRuntimeAccess
+import io.github.magisk317.xposed.logging.MagiskLogPolicy
 import io.github.magisk317.xposed.logging.XLog
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -17,6 +18,7 @@ class MethodHookWrapperTest {
 
     @BeforeEach
     fun setup() {
+        MagiskLogPolicy.install(isDiagnosticBuild = true)
         // Establish the neutral XLog -> CoreLogSinkHolder bridge with the core tag,
         // so this test does not depend on another test having installed it first.
         CoreRuntime.install(
@@ -35,6 +37,7 @@ class MethodHookWrapperTest {
     fun tearDown() {
         CoreRuntime.resetForTest()
         CoreLogSinkHolder.install(null)
+        MagiskLogPolicy.install(isDiagnosticBuild = false)
     }
 
     @Test

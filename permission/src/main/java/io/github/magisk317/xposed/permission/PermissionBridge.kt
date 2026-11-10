@@ -35,6 +35,8 @@ object PermissionBridge {
             Manifest.permission.POST_NOTIFICATIONS,
             Manifest.permission.READ_CONTACTS,
             Manifest.permission.SEND_SMS,
+            Manifest.permission.READ_SMS,
+            Manifest.permission.RECEIVE_SMS,
             Manifest.permission.READ_PHONE_STATE,
             -> listOf("pm grant $packageName $permission")
 
@@ -187,6 +189,8 @@ object PermissionBridge {
         Manifest.permission.POST_NOTIFICATIONS,
         Manifest.permission.READ_CONTACTS,
         Manifest.permission.SEND_SMS,
+        Manifest.permission.READ_SMS,
+        Manifest.permission.RECEIVE_SMS,
         Manifest.permission.READ_PHONE_STATE,
         Manifest.permission.PACKAGE_USAGE_STATS,
         Manifest.permission.SCHEDULE_EXACT_ALARM,

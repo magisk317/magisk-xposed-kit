@@ -1,5 +1,6 @@
 package io.github.magisk317.xposed.permission
 
+import android.Manifest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -84,6 +85,23 @@ class PermissionBridgeAccessibilityTest {
                 "settings put secure accessibility_enabled 1",
             ),
             PermissionBridge.accessibilityCommands(":", component),
+        )
+    }
+    @Test
+    fun `SMS grants compose with accessibility enablement without removing existing services`() {
+        val commands = PermissionBridge.permissionCommands(
+            "app.pkg",
+            setOf(Manifest.permission.READ_SMS, Manifest.permission.RECEIVE_SMS),
+        ) + PermissionBridge.accessibilityCommands(other, component)
+
+        assertEquals(
+            listOf(
+                "pm grant app.pkg ${Manifest.permission.READ_SMS}",
+                "pm grant app.pkg ${Manifest.permission.RECEIVE_SMS}",
+                "settings put secure enabled_accessibility_services $other:$component",
+                "settings put secure accessibility_enabled 1",
+            ),
+            commands,
         )
     }
 }

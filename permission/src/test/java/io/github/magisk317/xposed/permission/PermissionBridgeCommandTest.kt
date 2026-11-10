@@ -16,6 +16,8 @@ class PermissionBridgeCommandTest {
         Manifest.permission.POST_NOTIFICATIONS,
         Manifest.permission.READ_CONTACTS,
         Manifest.permission.SEND_SMS,
+        Manifest.permission.READ_SMS,
+        Manifest.permission.RECEIVE_SMS,
         Manifest.permission.READ_PHONE_STATE,
         Manifest.permission.PACKAGE_USAGE_STATS,
         Manifest.permission.SCHEDULE_EXACT_ALARM,
@@ -30,6 +32,8 @@ class PermissionBridgeCommandTest {
                 "pm grant app.pkg ${Manifest.permission.POST_NOTIFICATIONS}",
                 "pm grant app.pkg ${Manifest.permission.READ_CONTACTS}",
                 "pm grant app.pkg ${Manifest.permission.SEND_SMS}",
+                "pm grant app.pkg ${Manifest.permission.READ_SMS}",
+                "pm grant app.pkg ${Manifest.permission.RECEIVE_SMS}",
                 "pm grant app.pkg ${Manifest.permission.READ_PHONE_STATE}",
                 "appops set app.pkg GET_USAGE_STATS allow",
                 "appops set app.pkg SCHEDULE_EXACT_ALARM allow",
@@ -59,5 +63,22 @@ class PermissionBridgeCommandTest {
     @Test
     fun `nothing declared produces an empty command list`() {
         assertEquals(emptyList<String>(), PermissionBridge.permissionCommands("app.pkg", emptySet()))
+    }
+
+    @Test
+    fun `each SMS permission is granted only when that individual permission is declared`() {
+        val smsPermissions = listOf(
+            Manifest.permission.SEND_SMS,
+            Manifest.permission.READ_SMS,
+            Manifest.permission.RECEIVE_SMS,
+        )
+        repeat(1 shl smsPermissions.size) { mask ->
+            val declared = smsPermissions.filterIndexed { index, _ -> mask and (1 shl index) != 0 }.toSet()
+            assertEquals(
+                smsPermissions.filter { it in declared }.map { "pm grant app.pkg $it" },
+                PermissionBridge.permissionCommands("app.pkg", declared),
+                "declared=$declared",
+            )
+        }
     }
 }

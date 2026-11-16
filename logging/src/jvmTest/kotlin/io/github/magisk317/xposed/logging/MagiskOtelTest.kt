@@ -353,4 +353,33 @@ class MagiskOtelTest {
         assertTrue(payload.contains("02c1f46d-581e-4f80-9747-9b9dcb99bc46"))
         assertFalse(payload.contains("9f7e2b1a"))
     }
+    @Test
+    fun `suppressed result counters stay off unless configured`() {
+        val config = MagiskOtel.Config(
+            serviceName = "test",
+            suppressedResultValues = setOf("ok"),
+        )
+        assertEquals(null, MagiskOtel.suppressedResultOrNull(config, "push.receive", mapOf("result" to "ok")))
+    }
+
+    @Test
+    fun `suppressed result counters account ok spans and flush in batches`() {
+        MagiskOtel.resetSuppressedCountersForTest()
+        val config = MagiskOtel.Config(
+            serviceName = "test",
+            suppressedEventNames = setOf("push.keepalive"),
+            suppressedResultValues = setOf("ok"),
+            suppressedResultCounters = true,
+        )
+        assertEquals("ok", MagiskOtel.suppressedResultOrNull(config, "push.receive", mapOf("result" to "ok")))
+        assertEquals(null, MagiskOtel.suppressedResultOrNull(config, "push.receive", mapOf("result" to "error")))
+        assertEquals(null, MagiskOtel.suppressedResultOrNull(config, "push.keepalive", mapOf("result" to "ok")))
+        repeat(199) {
+            assertEquals(null, MagiskOtel.tickSuppressedCounter("push.receive|ok"))
+        }
+        assertEquals(200L, MagiskOtel.tickSuppressedCounter("push.receive|ok"))
+        assertEquals(null, MagiskOtel.tickSuppressedCounter("push.receive|ok"))
+        MagiskOtel.resetSuppressedCountersForTest()
+    }
+
 }

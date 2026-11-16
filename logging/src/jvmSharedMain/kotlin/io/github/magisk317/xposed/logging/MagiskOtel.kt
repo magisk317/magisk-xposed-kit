@@ -4,8 +4,10 @@ import java.io.BufferedOutputStream
 import java.net.HttpURLConnection
 import java.net.URI
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.ThreadFactory
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
 /**
@@ -90,9 +92,23 @@ object MagiskOtel {
          * noise while keeping skip / error / fallback spans. Empty by default.
          */
         val suppressedResultValues: Set<String> = emptySet(),
+        /**
+         * When true, result-based suppression isaccounted instead of being a blind drop: every
+         * suppressed span is counted per (source event, result) and a compact aggregate span is
+         * emitted every [SUPPRESSED_COUNTER_FLUSH_THRESHOLD] events. Downstream dashboards can
+         * then recover the success-path denominator (e.g. error / (ok + error)) without paying
+         * for the full ok span volume. Off by default so existing consumers are unaffected.
+         */
+        val suppressedResultCounters: Boolean = false,
     )
 
+    private const val SUPPRESSED_COUNTER_FLUSH_THRESHOLD = 200L
+    private const val EVENT_SUPPRESSED_RESULT = "otel.suppressed_result"
+    private const val ATTRIBUTE_SUPPRESSED_COUNT = "suppressed_count"
+
     private val configRef = AtomicReference<Config?>(null)
+    /** Pending suppressed-span counts, keyed by "sourceEvent|result". */
+    private val suppressedCounters = ConcurrentHashMap<String, AtomicLong>()
 
     /**
      * First valid installation id seen in this process for [cachedInstanceIdOwner]. Keyed by
@@ -158,6 +174,27 @@ object MagiskOtel {
         }
         val safeName = name.trim().ifEmpty { "event" }
         if (isSuppressed(config, safeName, attributes)) {
+            val countedResult = suppressedResultOrNull(config, safeName, attributes)
+            if (countedResult != null) {
+                val drained = tickSuppressedCounter("$safeName|$countedResult")
+                if (drained != null) {
+                    executor.execute {
+                        runCatching {
+                            // Bypass event() so the aggregate span is not suppressed itself.
+                            exportSpan(
+                                config = config,
+                                name = EVENT_SUPPRESSED_RESULT,
+                                attributes = mapOf(
+                                    "result" to countedResult,
+                                    "source_event" to safeName,
+                                    ATTRIBUTE_SUPPRESSED_COUNT to drained.toString(),
+                                ),
+                                statusOk = true,
+                            )
+                        }
+                    }
+                }
+            }
             return
         }
         val safeAttrs = sanitizeAttributes(attributes)
@@ -179,6 +216,32 @@ object MagiskOtel {
                 // only sink that could hear about it -- reporting here would recurse.
             }
         }
+    }
+
+    /**
+     * Result value that will be suppressed and therefore needs accounting, or null when the
+     * span is dropped for another reason (event-name suppression / counters disabled).
+     */
+    internal fun suppressedResultOrNull(
+        config: Config,
+        name: String,
+        attributes: Map<String, String>,
+    ): String? {
+        if (!config.suppressedResultCounters) return null
+        if (name in config.suppressedEventNames) return null
+        val result = attributes["result"] ?: return null
+        return result.takeIf { it in config.suppressedResultValues }
+    }
+
+    /** Pure counter step; returns the drained count when a flush is due. */
+    internal fun tickSuppressedCounter(key: String): Long? {
+        val counter = suppressedCounters.computeIfAbsent(key) { AtomicLong() }
+        if (counter.incrementAndGet() % SUPPRESSED_COUNTER_FLUSH_THRESHOLD != 0L) return null
+        return counter.getAndSet(0L).takeIf { it > 0 }
+    }
+
+    internal fun resetSuppressedCountersForTest() {
+        suppressedCounters.clear()
     }
 
     /**

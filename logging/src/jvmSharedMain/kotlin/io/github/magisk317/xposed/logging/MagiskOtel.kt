@@ -191,6 +191,10 @@ object MagiskOtel {
                                 ),
                                 statusOk = true,
                             )
+                        }.onFailure {
+                            // Same reason as the other executor block below: a dropped span
+                            // must not kill the executor thread, and the exporter is the only
+                            // sink that could hear about it, so reporting here would recurse.
                         }
                     }
                 }

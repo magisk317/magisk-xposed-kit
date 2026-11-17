@@ -176,11 +176,13 @@ class WebDavClient(
                 isNamespaceAware = true
                 // The multistatus body comes from a user-configured server; harden
                 // the parser against doctype/entity tricks instead of trusting it.
-                runCatching { setFeature("http://apache.org/xml/features/disallow-doctype-decl", true) }
-                runCatching { setFeature("http://xml.org/sax/features/external-general-entities", false) }
-                runCatching { setFeature("http://xml.org/sax/features/external-parameter-entities", false) }
-                runCatching { setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false) }
-                runCatching { setFeature("http://apache.org/xml/features/xinclude", false) }
+                // Older platform parsers may lack individual features; those
+                // failures are non-fatal and the defaults stay in effect.
+                runCatching { setFeature("http://apache.org/xml/features/disallow-doctype-decl", true) }.onFailure { }
+                runCatching { setFeature("http://xml.org/sax/features/external-general-entities", false) }.onFailure { }
+                runCatching { setFeature("http://xml.org/sax/features/external-parameter-entities", false) }.onFailure { }
+                runCatching { setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false) }.onFailure { }
+                runCatching { setFeature("http://apache.org/xml/features/xinclude", false) }.onFailure { }
             }
             val document = factory.newDocumentBuilder().parse(InputSource(StringReader(xml)))
             val responses = document.getElementsByTagNameNS("*", "response")

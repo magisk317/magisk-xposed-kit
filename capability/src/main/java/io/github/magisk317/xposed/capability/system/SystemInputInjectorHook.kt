@@ -74,12 +74,6 @@ class SystemInputInjectorHook : BaseHook() {
     private var amsSystemReadyHooked = false
     @Volatile
     private var suppressionLogged = false
-    @Volatile
-    private var sendingUidFieldsLogged = false
-    @Volatile
-    private var lastAutoInputCallerUid: Int = -1
-    @Volatile
-    private var lastAutoInputCallerUidAt: Long = 0L
 
     override fun hookInitZygote(): Boolean = true
 
@@ -259,8 +253,7 @@ class SystemInputInjectorHook : BaseHook() {
                                 }
                                 val (uid, pkg) = extractCallerInfo(record)
                                 if (uid >= 0) {
-                                    lastAutoInputCallerUid = uid
-                                    lastAutoInputCallerUidAt = SystemClock.elapsedRealtime()
+                                    SystemInputUidProbe.recordCallerUid(uid)
                                 }
                                 XLog.w(
                                     message = "Diag broadcast enqueue: action=%s callerUid=%d callerPkg=%s record=%s",
@@ -281,35 +274,6 @@ class SystemInputInjectorHook : BaseHook() {
         }
     }
 
-    private fun extractBroadcastIntent(record: Any): Intent? {
-        if (record is Intent) return record
-        return runNonFatalOrNull { HookHelpers.getObjectField(record, "intent") as? Intent }
-            ?: runNonFatalOrNull { HookHelpers.callMethod(record, "getIntent") as? Intent }
-    }
-
-    private fun extractCallerInfo(record: Any): Pair<Int, String?> {
-        val uidFields = listOf("callerUid", "callingUid", "uid")
-        for (field in uidFields) {
-            runNonFatalOrNull { HookHelpers.getIntField(record, field) }?.let { return it to null }
-        }
-        var callerPkg = runNonFatalOrNull { HookHelpers.getObjectField(record, "callerPackage") as? String }
-        val callerApp = runNonFatalOrNull { HookHelpers.getObjectField(record, "callerApp") }
-        if (callerApp != null) {
-            runNonFatalOrNull { HookHelpers.getIntField(callerApp, "uid") }?.let { uid ->
-                return uid to callerPkg
-            }
-            runNonFatalOrNull { HookHelpers.getObjectField(callerApp, "info") }?.let { info ->
-                if (callerPkg == null) {
-                    callerPkg = runNonFatalOrNull { HookHelpers.getObjectField(info, "packageName") as? String }
-                        ?: runNonFatalOrNull { HookHelpers.callMethod(info, "getPackageName") as? String }
-                }
-                runNonFatalOrNull { HookHelpers.getIntField(info, "uid") }?.let { uid ->
-                    return uid to callerPkg
-                }
-            }
-        }
-        return -1 to callerPkg
-    }
     private fun registerReceiver(context: Context) {
         runNonFatalCatching {
             if (receiverRegistered) return
@@ -321,7 +285,7 @@ class SystemInputInjectorHook : BaseHook() {
             val receiver = object : BroadcastReceiver() {
                 override fun onReceive(context: Context, intent: Intent) {
                     XLog.withRoute(LogRoute.SYSTEM_INPUT.id) {
-                    val sendingUid = resolveSendingUid(this)
+                    val sendingUid = SystemInputUidProbe.resolveSendingUid(this)
                     val appUid = context.applicationInfo.uid
                     val senderPackages = resolvePackagesForUid(context, sendingUid)
                     if (!shouldAllowAutoInputSenderUid(
@@ -472,73 +436,6 @@ class SystemInputInjectorHook : BaseHook() {
         }
     }
 
-    private fun resolveAccessibilityOrderedResult(
-        receiver: BroadcastReceiver,
-    ): AutoInputAccessibilityResultContract.OrderedResult? {
-        val extras = runNonFatalOrNull { receiver.getResultExtras(false) } ?: return null
-        return AutoInputAccessibilityResultContract.readOrderedResult(extras)
-    }
-
-    private fun shouldSkipFallbackAfterAccessibility(
-        context: Context,
-        result: AutoInputAccessibilityResultContract.OrderedResult,
-    ): Boolean {
-        return AutoInputFallbackPolicy.shouldSkipFallbackAfterAccessibility(
-            success = result.success,
-            reason = result.reason,
-            windowPackage = result.windowPackage,
-            modulePackage = io.github.magisk317.xposed.capability.runtime.CoreRuntime.access.applicationId,
-            homePackages = resolveHomePackages(context),
-        )
-    }
-
-    private fun resolveHomePackages(context: Context): Set<String> {
-        val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
-        return runNonFatalCatching {
-            val infos = queryIntentActivitiesCompat(context.packageManager, intent)
-            infos.mapNotNull { it.activityInfo?.packageName?.takeIf(String::isNotBlank) }.toSet()
-        }.getOrDefault(emptySet())
-    }
-
-    private fun resolvePackagesForUid(context: Context, uid: Int): Set<String> {
-        if (uid < 0) return emptySet()
-        return runNonFatalOrNull {
-            context.packageManager.getPackagesForUid(uid)
-                ?.filter(String::isNotBlank)
-                ?.toSet()
-        }.orEmpty()
-    }
-
-    @SuppressLint("QueryPermissionsNeeded")
-    private fun queryIntentActivitiesCompat(
-        packageManager: PackageManager,
-        intent: Intent,
-    ): List<ResolveInfo> {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            return packageManager.queryIntentActivities(
-                intent,
-                PackageManager.ResolveInfoFlags.of(matchDefaultOnlyFlag().toLong()),
-            )
-        }
-        val result = runNonFatalOrNull {
-            val method = packageManager.javaClass.getMethod(
-                "queryIntentActivities",
-                Intent::class.java,
-                Int::class.javaPrimitiveType,
-            )
-            method.invoke(packageManager, intent, matchDefaultOnlyFlag())
-        }
-        return (result as? List<*>)?.filterIsInstance<ResolveInfo>().orEmpty()
-    }
-
-    private fun matchDefaultOnlyFlag(): Int {
-        return resolveStaticIntFieldOrDefault(
-            PackageManager::class.java,
-            "MATCH_DEFAULT_ONLY",
-            MATCH_DEFAULT_ONLY_FALLBACK,
-        )
-    }
-
     private fun logSuppressedOnce(stage: String) {
         if (suppressionLogged) return
         synchronized(this) {
@@ -546,68 +443,6 @@ class SystemInputInjectorHook : BaseHook() {
             XLog.w(message = "SystemInputInjectorHook suppressed: stage=%s", stage)
             suppressionLogged = true
         }
-    }
-
-    private fun resolveSendingUid(receiver: BroadcastReceiver): Int {
-        val cached = lastAutoInputCallerUid
-        if (cached >= 0) {
-            val ageMs = SystemClock.elapsedRealtime() - lastAutoInputCallerUidAt
-            if (ageMs in 0..CACHED_UID_TTL_MS) {
-                return cached
-            }
-        }
-        // Try system API if available
-        val direct = runNonFatalCatching {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                HookHelpers.callMethod(receiver, "getSendingUid") as Int
-            } else {
-                null
-            }
-        }.getOrElse { t ->
-            XLog.w("Failed to get sendingUid: ${t.message}")
-            null
-        }
-        if (direct != null) return direct
-
-        val pendingResult = runNonFatalOrNull { HookHelpers.callMethod(receiver, "getPendingResult") }
-            ?: runNonFatalOrNull { HookHelpers.getObjectField(receiver, "mPendingResult") }
-        if (pendingResult != null) {
-            val candidates = listOf("mSentFromUid", "mSendingUid", "mSenderUid", "mCallingUid")
-            for (field in candidates) {
-                runNonFatalOrNull { HookHelpers.getIntField(pendingResult, field) }?.let { return it }
-            }
-            logPendingResultFieldsOnce(pendingResult)
-        } else {
-            logPendingResultMissingOnce()
-        }
-        return -1
-    }
-
-    @Volatile
-    private var pendingResultMissingLogged = false
-
-    private fun logPendingResultMissingOnce() {
-        if (pendingResultMissingLogged) return
-        synchronized(this) {
-            if (pendingResultMissingLogged) return
-            pendingResultMissingLogged = true
-        }
-        XLog.w("Diag pendingResult is null; unable to resolve sendingUid")
-    }
-
-    private fun logPendingResultFieldsOnce(pendingResult: Any) {
-        if (sendingUidFieldsLogged) return
-        synchronized(this) {
-            if (sendingUidFieldsLogged) return
-            sendingUidFieldsLogged = true
-        }
-        val fields = generateSequence(pendingResult.javaClass) { it.superclass }
-            .flatMap { it.declaredFields.asSequence() }
-            .map { "${it.name}:${it.type.name}" }
-            .distinct()
-            .sorted()
-            .joinToString(limit = 80, truncated = "...")
-        XLog.w(message = "Diag pendingResult fields: %s", fields)
     }
 
     private fun getInputHandler(): Handler {
@@ -910,10 +745,8 @@ class SystemInputInjectorHook : BaseHook() {
         private const val SYSTEM_SERVER_PROCESS = "system_server"
         private const val DELAY_REGISTER = 500L
         private const val MAX_REGISTER_ATTEMPTS = 10
-        private const val CACHED_UID_TTL_MS = 10_000L
         private const val MAX_SYNC_INPUT_INTERVAL_MS = 200L
         private const val RECEIVER_PRIORITY_SYSTEM_PRIMARY = 2000
-        private const val MATCH_DEFAULT_ONLY_FALLBACK = 0x00010000
 
         @Suppress("unused")
         fun resolveActionAutoInput(): String =

@@ -52,6 +52,23 @@ object XposedLogClient {
         BACKOFF,
         PROVIDER_NULL,
         PROVIDER_EXCEPTION,
+        HOST_PACKAGE_STOPPED,
+    }
+
+    /**
+     * Logging must not resurrect the module process after it has been force-stopped.
+     * Hook processes use a system/host context, so derive the module package from the
+     * configured provider authority and inspect its stopped bit without touching the provider.
+     */
+    private fun isHostPackageStopped(context: Context): Boolean {
+        val packageName = authority
+            .removeSuffix(".xposed.log")
+            .takeIf { it.isNotBlank() && it != authority }
+            ?: return false
+        return runCatching {
+            val appInfo = context.packageManager.getApplicationInfo(packageName, 0)
+            (appInfo.flags and android.content.pm.ApplicationInfo.FLAG_STOPPED) != 0
+        }.getOrDefault(false)
     }
 
     /**
@@ -191,7 +208,11 @@ object XposedLogClient {
         // Fast path: context already available, no lock or reflection needed
         val fastCtx = localContext
         if (fastCtx != null) {
-            submitToExecutor(fastCtx, sanitizedEvent)
+            if (!isHostPackageStopped(fastCtx)) {
+                submitToExecutor(fastCtx, sanitizedEvent)
+            } else {
+                recordDrop(DropReason.HOST_PACKAGE_STOPPED)
+            }
             return
         }
         synchronized(zygoteLock) {
@@ -210,11 +231,19 @@ object XposedLogClient {
                 }
                 return
             }
-            submitToExecutor(ctx, sanitizedEvent)
+            if (!isHostPackageStopped(ctx)) {
+                submitToExecutor(ctx, sanitizedEvent)
+            } else {
+                recordDrop(DropReason.HOST_PACKAGE_STOPPED)
+            }
         }
     }
 
     private fun submitToExecutor(ctx: Context, event: XposedLogEvent) {
+        if (isHostPackageStopped(ctx)) {
+            recordDrop(DropReason.HOST_PACKAGE_STOPPED)
+            return
+        }
         if (isProviderBackoffActive()) {
             recordDrop(DropReason.BACKOFF)
             return
@@ -224,6 +253,8 @@ object XposedLogClient {
             // again on the worker so a backoff does not flood the provider.
             if (isProviderBackoffActive()) {
                 recordDrop(DropReason.BACKOFF)
+            } else if (isHostPackageStopped(ctx)) {
+                recordDrop(DropReason.HOST_PACKAGE_STOPPED)
             } else {
                 try {
                     val uri = XposedLogEvent.appendUri(authority)
@@ -340,6 +371,7 @@ object XposedLogClient {
             DropReason.BACKOFF -> droppedBackoffCount.incrementAndGet()
             DropReason.PROVIDER_NULL -> providerNullCount.incrementAndGet()
             DropReason.PROVIDER_EXCEPTION -> providerExceptionCount.incrementAndGet()
+            DropReason.HOST_PACKAGE_STOPPED -> Unit
         }
     }
 

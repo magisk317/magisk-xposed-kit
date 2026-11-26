@@ -51,6 +51,11 @@ object RuntimeStateProviderAddress {
             )
         },
     ): Bundle? {
+        // A hook process commonly runs inside system_server/telephony while the module app is
+        // force-stopped. Calling its provider in that state would make ActivityManager start the
+        // stopped app just to record a diagnostic event, defeating on-demand execution. Keep the
+        // local app-process path available, but drop cross-process diagnostics while STOPPED.
+        if (shouldSkipStoppedModule(context, applicationId)) return null
         val identity = Binder.clearCallingIdentity()
         return try {
             runCatching {
@@ -61,5 +66,13 @@ object RuntimeStateProviderAddress {
         } finally {
             Binder.restoreCallingIdentity(identity)
         }
+    }
+
+    private fun shouldSkipStoppedModule(context: Context, applicationId: String): Boolean {
+        if (context.packageName == applicationId) return false
+        return runCatching {
+            val info = context.packageManager.getApplicationInfo(applicationId, 0)
+            (info.flags and android.content.pm.ApplicationInfo.FLAG_STOPPED) != 0
+        }.getOrDefault(true)
     }
 }
